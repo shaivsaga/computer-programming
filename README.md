@@ -1,17 +1,14 @@
-# Login App (Next.js + React + MySQL)
+# Login App (Next.js + React + PostgreSQL)
 
-Sign up, log in, log out, and a protected `/dashboard`. Sessions live in MySQL.
-The app creates its own tables on first use, so there is no SQL to run.
+Sign up, log in, log out, and a protected `/dashboard`. Sessions live in PostgreSQL.
+The app creates its tables on first use.
 
-## Put it online (Vercel + TiDB Cloud)
+## Deploy with Vercel and Neon
 
-1. Create a GitHub repo and upload these files (Add file > Upload files).
-2. In Vercel: Add New > Project > import that repo > Deploy.
-3. In the Vercel project: Storage (or Marketplace) > TiDB Cloud > create a database and connect it to the project.
-   This adds the `TIDB_*` variables automatically.
-4. Redeploy. Open your Vercel URL and sign up.
+1. Import the GitHub repository into Vercel.
+2. In Vercel Storage, create a Neon database on the Free plan and connect it to the project's Production environment. This adds `DATABASE_URL`.
+3. Deploy again so the running app picks up the new variable. Open the site and sign up.
 
-Manual option: skip step 3 and add `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL=true`
-in Settings > Environment Variables (see `.env.example`).
+You can also set `DATABASE_URL` directly in Vercel using a hosted PostgreSQL connection string with TLS enabled. For local development, copy `.env.example` to `.env.local`, enter your local PostgreSQL connection string, then run `npm ci` and `npm run dev`.
 
-`sql/schema.sql` is only a reference copy of the tables.
+The schema is defined in [`lib/db.js`](lib/db.js).

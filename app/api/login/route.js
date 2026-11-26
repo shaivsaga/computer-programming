@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { pool } from "@/lib/db";
+import { query } from "@/lib/db";
 import { createSession } from "@/lib/auth";
 import { readCredentials } from "@/lib/validate";
 
@@ -26,8 +26,8 @@ export async function POST(request) {
   }
 
   try {
-    const [rows] = await pool.execute(
-      "SELECT id, password_hash FROM users WHERE email = ?",
+    const { rows } = await query(
+      "SELECT id, password_hash FROM users WHERE email = $1",
       [creds.email]
     );
     const user = rows[0];

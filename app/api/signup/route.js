@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { pool } from "@/lib/db";
+import { query } from "@/lib/db";
 import { createSession } from "@/lib/auth";
 import { readCredentials, passwordProblem } from "@/lib/validate";
 
@@ -24,14 +24,14 @@ export async function POST(request) {
 
   try {
     const passwordHash = await bcrypt.hash(creds.password, 12);
-    const [result] = await pool.execute(
-      "INSERT INTO users (email, password_hash) VALUES (?, ?)",
+    const { rows } = await query(
+      "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id",
       [creds.email, passwordHash]
     );
-    await createSession(result.insertId);
+    await createSession(rows[0].id);
     return NextResponse.json({ ok: true }, { status: 201 });
   } catch (err) {
-    if (err?.code === "ER_DUP_ENTRY") {
+    if (err?.code === "23505" && err.constraint === "users_email_key") {
       return NextResponse.json(
         { error: "That email is already in use." },
         { status: 409 }
