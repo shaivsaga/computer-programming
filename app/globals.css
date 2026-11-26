@@ -19,6 +19,7 @@
   --mu: #4E537A;
   --ac: #2E4FB3;
   --acd: #1F3A8A;
+  --ach: #1F3A8A;
   --acs: #DDE5FF;
   --onac: #FFFFFF;
   --ok: #196B3F;
@@ -59,6 +60,7 @@
   --mu: #B3BBE8;
   --ac: #7C9BFF;
   --acd: #4F6FD6;
+  --ach: #9BB3FF;
   --acs: #262F66;
   --onac: #0F1226;
   --ok: #5BD08A;
@@ -245,8 +247,8 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 }
 
 .btn-primary:hover {
-  background-color: var(--acd);
-  border-color: var(--acd);
+  background-color: var(--ach);
+  border-color: var(--ach);
   transform: translateY(-1px);
   box-shadow: inset 0 -3px 0 var(--acd), 0 4px 0 var(--sh);
 }
@@ -475,24 +477,23 @@ html.js .reveal.is-visible {
 
 .segmented-control {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  gap: 2px;
   border: 2px solid var(--mu);
-  background-color: var(--sf);
+  background-color: var(--mu);
   max-width: 100%;
 }
 
 .seg-item {
+  flex: 0 0 auto;
+  min-width: 44px;
   min-height: 44px;
   padding: 0 12px;
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--mu);
-  border-right: 2px solid var(--mu);
+  background-color: var(--sf);
   transition: background-color 140ms var(--ease), color 140ms var(--ease);
-}
-
-.seg-item:last-child {
-  border-right: 0;
 }
 
 .seg-item:hover {
@@ -500,10 +501,19 @@ html.js .reveal.is-visible {
   background-color: var(--sf2);
 }
 
+.seg-item:focus-visible {
+  position: relative;
+  z-index: 2;
+}
+
 .seg-item.is-active {
   background-color: var(--acs);
   color: var(--tx);
   box-shadow: inset 0 -3px 0 var(--ac);
+}
+
+.board-body:focus-visible {
+  outline-offset: -3px;
 }
 
 .board-body {
@@ -715,6 +725,22 @@ html.js .reveal.is-visible {
   border-bottom: 2px solid var(--ln);
   padding: 12px 0;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  contain: layout paint;
+}
+
+.ticker-toggle {
+  flex: none;
+  width: 44px;
+  margin-left: 12px;
+  padding: 0;
+}
+
+.ticker-window {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .ticker-scroll-wrap {
@@ -726,11 +752,13 @@ html.js .reveal.is-visible {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding-right: 12px;
   width: max-content;
   animation: marqueeScroll 32s linear infinite;
 }
 
-.ticker-band:hover .ticker-track {
+.ticker-window:hover .ticker-track,
+.ticker-band[data-paused="true"] .ticker-track {
   animation-play-state: paused;
 }
 
@@ -783,8 +811,9 @@ html.js .reveal.is-visible {
 .stage-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
   border: 2px solid var(--ln);
-  background-color: var(--sf);
+  background-color: var(--ln);
   margin-bottom: 20px;
 }
 
@@ -792,14 +821,13 @@ html.js .reveal.is-visible {
   min-height: 52px;
   padding: 12px 16px;
   text-align: left;
-  border-right: 2px solid var(--ln);
   background-color: var(--sf);
   color: var(--mu);
   transition: background-color 140ms var(--ease), color 140ms var(--ease);
 }
 
-.stage-tab:last-child { border-right: 0; }
 .stage-tab:hover { background-color: var(--sf2); color: var(--tx); }
+.stage-tab:focus-visible { position: relative; z-index: 2; }
 .stage-tab.is-active {
   background-color: var(--acs);
   color: var(--tx);
@@ -1314,6 +1342,23 @@ html.js .reveal.is-visible {
   outline-offset: 2px;
 }
 
+.auth-panel .astryx-checkbox-input [data-astryx-pressable] {
+  min-height: 44px;
+  align-items: center;
+}
+
+.auth-panel .astryx-checkbox-input input[type="checkbox"] {
+  width: 44px;
+  height: 44px;
+}
+
+.auth-panel .astryx-checkbox-label {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding-right: 8px;
+}
+
 .auth-panel .astryx-checkbox-indicator {
   border: 2px solid var(--mu);
   background-color: var(--oa);
@@ -1336,7 +1381,8 @@ html.js .reveal.is-visible {
 }
 
 .auth-panel button:hover {
-  background-color: var(--acd);
+  background-color: var(--ach);
+  border-color: var(--ach);
 }
 
 .auth-panel button:active {
@@ -1397,10 +1443,6 @@ html.js .reveal.is-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .stage-tab {
-    border-bottom: 2px solid var(--ln);
-  }
-
   .nav-links {
     display: none;
   }
@@ -1423,18 +1465,91 @@ html.js .reveal.is-visible {
     display: none;
   }
 
+  .segmented-control:has(.seg-item:nth-child(3)) {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .segmented-control:has(.seg-item:nth-child(3)) .seg-item {
+    flex: 1 0 30%;
+  }
+
   .mini-cols {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .mini-col {
+    min-height: 0;
+  }
+
+  .stage-panel {
+    padding: 10px;
+  }
+
+  .cal-box {
+    padding: 6px;
+  }
+
+  .cal-grid {
+    gap: 1px;
+  }
+
+  .cal-day {
+    border-width: 1px;
+  }
+
   .auth-shell {
     width: calc(100% - 2rem);
-    padding-block: 1.5rem;
+    padding-block: 1rem;
+  }
+
+  .auth-layout {
+    gap: 1rem;
+  }
+
+  .art-card {
+    padding: 14px;
+  }
+
+  .art-card-head {
+    margin-bottom: 8px;
+  }
+
+  .art-canvas {
+    padding: 10px 12px;
+    margin-bottom: 10px;
   }
 
   .lock-sprite {
-    width: min(68%, 14rem);
+    width: min(48%, 9rem);
   }
+
+  .auth-panel {
+    padding: 20px;
+  }
+
+  .auth-panel h1 {
+    margin-bottom: 1rem;
+  }
+
+  .auth-form {
+    gap: 0.875rem;
+  }
+
+  .alt {
+    margin-top: 1rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .tb-inner {
+    padding-inline: 8px;
+    gap: 6px;
+  }
+
+  .brand { gap: 6px; }
+  .tb-actions { gap: 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1445,6 +1560,19 @@ html.js .reveal.is-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  .ticker-toggle,
+  .ticker-chip[aria-hidden="true"] {
+    display: none;
+  }
+  .ticker-window {
+    width: 100%;
+  }
+  .ticker-track {
+    width: 100%;
+    padding-inline: 12px;
+    flex-wrap: wrap;
+    animation: none !important;
   }
   .ticker-scroll-wrap {
     transform: none !important;

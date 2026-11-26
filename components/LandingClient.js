@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import TopBar from "./TopBar";
 import {
@@ -14,7 +14,45 @@ import {
   WORKFLOW_TABS,
 } from "@/lib/landing-data";
 
+const HERO_VIEW_TABS = [
+  { id: "board", label: "Board" },
+  { id: "list", label: "List" },
+];
+
+const BILLING_OPTIONS = [
+  { id: "term", label: "Per Term" },
+  { id: "year", label: "Yearly (-20%)" },
+];
+
+// Handle navigation at the group so arrow keys use the same order and action as a click.
+function navigateOptions(event) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const group = event.currentTarget;
+  const isRadio = group.getAttribute("role") === "radiogroup";
+  const buttons = Array.from(group.querySelectorAll(isRadio ? '[role="radio"]' : '[role="tab"]'));
+  const index = buttons.indexOf(event.target);
+  if (index < 0) return;
+
+  let next;
+  if (event.key === "ArrowRight" || (isRadio && event.key === "ArrowDown")) {
+    next = (index + 1) % buttons.length;
+  } else if (event.key === "ArrowLeft" || (isRadio && event.key === "ArrowUp")) {
+    next = (index + buttons.length - 1) % buttons.length;
+  } else if (!isRadio && event.key === "Home") {
+    next = 0;
+  } else if (!isRadio && event.key === "End") {
+    next = buttons.length - 1;
+  } else {
+    return;
+  }
+
+  event.preventDefault();
+  buttons[next].focus();
+  buttons[next].click();
+}
+
 export default function LandingClient({ isSignedIn, userEmail }) {
+  const uid = useId();
   const [heroTasks, setHeroTasks] = useState(() =>
     INITIAL_HERO_TASKS.map((task) => ({ ...task }))
   );
@@ -25,6 +63,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
   const [qrSeed, setQrSeed] = useState(1);
   const [adminDraftMode, setAdminDraftMode] = useState(false);
   const [billing, setBilling] = useState("term");
+  const [ribbonPaused, setRibbonPaused] = useState(false);
   const [activeSection, setActiveSection] = useState("top");
   const [toast, setToast] = useState("");
 
@@ -32,6 +71,8 @@ export default function LandingClient({ isSignedIn, userEmail }) {
   const tickerRef = useRef(null);
   const doneBadgeRef = useRef(null);
   const toastTimerRef = useRef(null);
+  const boardViewPanelId = `${uid}-board-view-panel`;
+  const stagePanelId = `${uid}-stage-panel`;
 
   function showToast(message) {
     setToast(message);
@@ -60,7 +101,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
       if (scrollRailRef.current) {
         scrollRailRef.current.style.transform = `scaleX(${progress})`;
       }
-      if (tickerRef.current && !reduced.matches) {
+      if (tickerRef.current && !ribbonPaused && !reduced.matches) {
         const shift = -progress * 180;
         tickerRef.current.style.setProperty("--scroll-shift", `${shift.toFixed(1)}px`);
       }
@@ -89,7 +130,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
       window.removeEventListener("scroll", onScroll);
       if (frameId) window.cancelAnimationFrame(frameId);
     };
-  }, []);
+  }, [ribbonPaused]);
 
   // Intersection reveal observer for below-the-fold sections.
   useEffect(() => {
@@ -306,6 +347,8 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                     className="segmented-control"
                     role="radiogroup"
                     aria-label="Filter demo tasks by subject"
+                    aria-orientation="horizontal"
+                    onKeyDown={navigateOptions}
                   >
                     {HERO_FILTERS.map((subj) => (
                       <button
@@ -313,6 +356,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                         type="button"
                         role="radio"
                         aria-checked={heroFilter === subj}
+                        tabIndex={heroFilter === subj ? 0 : -1}
                         className={`seg-item${heroFilter === subj ? " is-active" : ""}`}
                         onClick={() => setHeroFilter(subj)}
                       >
@@ -325,29 +369,34 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                     className="segmented-control"
                     role="tablist"
                     aria-label="Board view mode"
+                    aria-orientation="horizontal"
+                    onKeyDown={navigateOptions}
                   >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={heroView === "board"}
-                      className={`seg-item${heroView === "board" ? " is-active" : ""}`}
-                      onClick={() => setHeroView("board")}
-                    >
-                      Board
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={heroView === "list"}
-                      className={`seg-item${heroView === "list" ? " is-active" : ""}`}
-                      onClick={() => setHeroView("list")}
-                    >
-                      List
-                    </button>
+                    {HERO_VIEW_TABS.map((view) => (
+                      <button
+                        key={view.id}
+                        id={`${uid}-board-view-tab-${view.id}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={heroView === view.id}
+                        aria-controls={boardViewPanelId}
+                        tabIndex={heroView === view.id ? 0 : -1}
+                        className={`seg-item${heroView === view.id ? " is-active" : ""}`}
+                        onClick={() => setHeroView(view.id)}
+                      >
+                        {view.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                <div className="board-body">
+                <div
+                  id={boardViewPanelId}
+                  className="board-body"
+                  role="tabpanel"
+                  aria-labelledby={`${uid}-board-view-tab-${heroView}`}
+                  tabIndex={0}
+                >
                   <div
                     className={`mini-cols${heroView === "list" ? " is-list" : ""}`}
                   >
@@ -406,20 +455,40 @@ export default function LandingClient({ isSignedIn, userEmail }) {
           </div>
         </section>
 
-        <div className="ticker-band" aria-label="Supported subject labels">
-          <div ref={tickerRef} className="ticker-scroll-wrap">
-            <div className="ticker-track">
-              {[...SUBJECTS, ...SUBJECTS].map((subject, index) => (
-                <div key={`${subject.code}-${index}`} className="ticker-chip">
-                  <span
-                    className="subj-tag"
-                    style={{ backgroundColor: subject.bg }}
+        <div
+          className="ticker-band"
+          role="region"
+          aria-label="Supported subject labels"
+          data-paused={ribbonPaused}
+        >
+          <button
+            type="button"
+            className="ticker-toggle btn-secondary"
+            aria-label="Pause subject ribbon"
+            aria-pressed={ribbonPaused}
+            onClick={() => setRibbonPaused(!ribbonPaused)}
+          >
+            <span aria-hidden="true">{ribbonPaused ? "▶" : "Ⅱ"}</span>
+          </button>
+          <div className="ticker-window">
+            <div ref={tickerRef} className="ticker-scroll-wrap">
+              <div className="ticker-track">
+                {[...SUBJECTS, ...SUBJECTS].map((subject, index) => (
+                  <div
+                    key={`${subject.code}-${index}`}
+                    className="ticker-chip"
+                    aria-hidden={index >= SUBJECTS.length || undefined}
                   >
-                    {subject.code}
-                  </span>
-                  <span>{subject.name}</span>
-                </div>
-              ))}
+                    <span
+                      className="subj-tag"
+                      style={{ backgroundColor: subject.bg }}
+                    >
+                      {subject.code}
+                    </span>
+                    <span>{subject.name}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -443,13 +512,18 @@ export default function LandingClient({ isSignedIn, userEmail }) {
               className="stage-tabs reveal"
               role="tablist"
               aria-label="Feature workflow"
+              aria-orientation="horizontal"
+              onKeyDown={navigateOptions}
             >
               {WORKFLOW_TABS.map((tab) => (
                 <button
                   key={tab.id}
+                  id={`${uid}-stage-tab-${tab.id}`}
                   type="button"
                   role="tab"
                   aria-selected={stageId === tab.id}
+                  aria-controls={stagePanelId}
+                  tabIndex={stageId === tab.id ? 0 : -1}
                   className={`stage-tab${stageId === tab.id ? " is-active" : ""}`}
                   onClick={() => setStageId(tab.id)}
                 >
@@ -458,7 +532,13 @@ export default function LandingClient({ isSignedIn, userEmail }) {
               ))}
             </div>
 
-            <div className="stage-panel reveal" role="tabpanel">
+            <div
+              id={stagePanelId}
+              className="stage-panel reveal"
+              role="tabpanel"
+              aria-labelledby={`${uid}-stage-tab-${activeStage.id}`}
+              tabIndex={0}
+            >
               <div className="stage-copy">
                 <h3>{activeStage.heading}</h3>
                 <p>{activeStage.description}</p>
@@ -662,25 +742,22 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                 className="segmented-control"
                 role="radiogroup"
                 aria-label="Billing period"
+                aria-orientation="horizontal"
+                onKeyDown={navigateOptions}
               >
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={billing === "term"}
-                  className={`seg-item${billing === "term" ? " is-active" : ""}`}
-                  onClick={() => setBilling("term")}
-                >
-                  Per Term
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={billing === "year"}
-                  className={`seg-item${billing === "year" ? " is-active" : ""}`}
-                  onClick={() => setBilling("year")}
-                >
-                  Yearly (-20%)
-                </button>
+                {BILLING_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={billing === option.id}
+                    tabIndex={billing === option.id ? 0 : -1}
+                    className={`seg-item${billing === option.id ? " is-active" : ""}`}
+                    onClick={() => setBilling(option.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
             </div>
 
