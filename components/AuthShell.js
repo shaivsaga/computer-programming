@@ -6,6 +6,7 @@ export default function AuthShell({
   sprite,
   isSignedIn = false,
   statusLabel,
+  lockState = "idle",
   planName,
   children,
 }) {
@@ -15,15 +16,36 @@ export default function AuthShell({
       <main className="auth-shell">
         <div className="auth-layout">
           <div className="art-stage">
-            <div className="art-card">
+            <div className="art-card" data-lock-state={lockState}>
               <div className="art-card-head">
-                <span className="art-status">{statusLabel}</span>
+                <span className="art-status" aria-live="polite">
+                  {lockState === "unlocked" && (
+                    <svg
+                      className="check-draw-svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 18 18"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        className="check-draw-path"
+                        pathLength="1"
+                        d="M3.5 9.5L7.2 13.2L14.5 5"
+                        stroke="currentColor"
+                        strokeWidth="2.4"
+                        strokeLinecap="square"
+                      />
+                    </svg>
+                  )}
+                  <span>{statusLabel}</span>
+                </span>
                 {planName && <span className="art-plan">Plan: {planName}</span>}
               </div>
               <div className="art-canvas">
                 <Image
                   className="lock-sprite"
-                  src={`/art/lock-${sprite}.png`}
+                  src={`/art/lock-${lockState === "unlocked" ? "open" : sprite}.png`}
                   alt=""
                   width={380}
                   height={296}

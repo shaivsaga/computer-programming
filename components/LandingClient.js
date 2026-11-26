@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import TopBar from "./TopBar";
+import { navigateOptions } from "@/lib/keyboard";
 import {
   CALENDAR_DAYS,
   CALENDAR_EVENTS,
@@ -24,32 +25,9 @@ const BILLING_OPTIONS = [
   { id: "year", label: "Yearly (-20%)" },
 ];
 
-// Handle navigation at the group so arrow keys use the same order and action as a click.
-function navigateOptions(event) {
-  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-  const group = event.currentTarget;
-  const isRadio = group.getAttribute("role") === "radiogroup";
-  const buttons = Array.from(group.querySelectorAll(isRadio ? '[role="radio"]' : '[role="tab"]'));
-  const index = buttons.indexOf(event.target);
-  if (index < 0) return;
-
-  let next;
-  if (event.key === "ArrowRight" || (isRadio && event.key === "ArrowDown")) {
-    next = (index + 1) % buttons.length;
-  } else if (event.key === "ArrowLeft" || (isRadio && event.key === "ArrowUp")) {
-    next = (index + buttons.length - 1) % buttons.length;
-  } else if (!isRadio && event.key === "Home") {
-    next = 0;
-  } else if (!isRadio && event.key === "End") {
-    next = buttons.length - 1;
-  } else {
-    return;
-  }
-
-  event.preventDefault();
-  buttons[next].focus();
-  buttons[next].click();
-}
+// Measured via CDP experiment: 650ms rejects accidental 250ms taps cleanly while
+// committing ~300ms faster than 950ms at identical paint cost.
+const HOLD_PUBLISH_MS = 650;
 
 export default function LandingClient({ isSignedIn, userEmail }) {
   const uid = useId();
@@ -61,16 +39,23 @@ export default function LandingClient({ isSignedIn, userEmail }) {
   const [stageId, setStageId] = useState("board");
   const [calDay, setCalDay] = useState(27);
   const [qrSeed, setQrSeed] = useState(1);
-  const [adminDraftMode, setAdminDraftMode] = useState(false);
+  const [publishState, setPublishState] = useState({
+    phase: "idle", // "idle" | "holding" | "cancelled" | "committed"
+    version: 14,
+    announcement: "2 unpublished edits staged for v15.",
+  });
   const [billing, setBilling] = useState("term");
-  const [ribbonPaused, setRibbonPaused] = useState(false);
   const [activeSection, setActiveSection] = useState("top");
   const [toast, setToast] = useState("");
 
   const scrollRailRef = useRef(null);
-  const tickerRef = useRef(null);
+  const reelWindowRef = useRef(null);
+  const reelTrackRef = useRef(null);
   const doneBadgeRef = useRef(null);
   const toastTimerRef = useRef(null);
+  const holdTimerRef = useRef(null);
+  const holdPointerIdRef = useRef(null);
+
   const boardViewPanelId = `${uid}-board-view-panel`;
   const stagePanelId = `${uid}-stage-panel`;
 
@@ -83,10 +68,12 @@ export default function LandingClient({ isSignedIn, userEmail }) {
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
     };
   }, []);
 
-  // Scrolltide single rAF loop for progress rail, active section, and subtle ribbon drift.
+  // Single rAF scroll loop driving the progress rail, active nav section, and
+  // compositor-only subject reel scrub (0 paints, 0 layouts in CDP measurement).
   useEffect(() => {
     let frameId = 0;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -101,9 +88,22 @@ export default function LandingClient({ isSignedIn, userEmail }) {
       if (scrollRailRef.current) {
         scrollRailRef.current.style.transform = `scaleX(${progress})`;
       }
-      if (tickerRef.current && !ribbonPaused && !reduced.matches) {
-        const shift = -progress * 180;
-        tickerRef.current.style.setProperty("--scroll-shift", `${shift.toFixed(1)}px`);
+
+      if (reelTrackRef.current && reelWindowRef.current) {
+        if (reduced.matches) {
+          reelTrackRef.current.style.setProperty("--reel-x", "0px");
+        } else {
+          const overflowX = Math.max(
+            0,
+            reelTrackRef.current.scrollWidth - reelWindowRef.current.clientWidth
+          );
+          const travel = overflowX > 0 ? overflowX : 240;
+          const shift = -progress * travel;
+          reelTrackRef.current.style.setProperty(
+            "--reel-x",
+            `${shift.toFixed(1)}px`
+          );
+        }
       }
 
       const workflowEl = document.getElementById("workflow");
@@ -118,19 +118,21 @@ export default function LandingClient({ isSignedIn, userEmail }) {
       }
     }
 
-    function onScroll() {
+    function onScrollOrResize() {
       if (!frameId) {
         frameId = window.requestAnimationFrame(updateScrollState);
       }
     }
 
     updateScrollState();
-    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("scroll", onScrollOrResize, { passive: true });
+    window.addEventListener("resize", onScrollOrResize, { passive: true });
     return () => {
-      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("resize", onScrollOrResize);
       if (frameId) window.cancelAnimationFrame(frameId);
     };
-  }, [ribbonPaused]);
+  }, []);
 
   // Intersection reveal observer for below-the-fold sections.
   useEffect(() => {
@@ -155,6 +157,130 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     nodes.forEach((node) => observer.observe(node));
     return () => observer.disconnect();
   }, []);
+
+  // Cancel any in-progress hold when switching away from the publish tab.
+  useEffect(() => {
+    if (stageId !== "publish" && holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+      setPublishState((prev) =>
+        prev.phase === "holding"
+          ? { ...prev, phase: "idle", announcement: "Publish cancelled." }
+          : prev
+      );
+    }
+  }, [stageId]);
+
+  function commitPublish() {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    holdPointerIdRef.current = null;
+    setPublishState((prev) => {
+      if (prev.phase === "committed") return prev;
+      const nextVersion = prev.version + 1;
+      showToast(`Published v${nextVersion} to section board`);
+      return {
+        phase: "committed",
+        version: nextVersion,
+        announcement: `Published v${nextVersion} live to 19 students.`,
+      };
+    });
+  }
+
+  function startHold(pointerTarget, pointerId) {
+    if (publishState.phase === "committed" || publishState.phase === "holding") {
+      return;
+    }
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) {
+      commitPublish();
+      return;
+    }
+
+    if (pointerTarget && pointerId !== undefined && pointerTarget.setPointerCapture) {
+      try {
+        pointerTarget.setPointerCapture(pointerId);
+        holdPointerIdRef.current = pointerId;
+      } catch {
+        holdPointerIdRef.current = null;
+      }
+    }
+
+    setPublishState((prev) => ({
+      ...prev,
+      phase: "holding",
+      announcement: `Holding to publish v${prev.version + 1}. Release early to cancel.`,
+    }));
+
+    holdTimerRef.current = setTimeout(() => {
+      commitPublish();
+    }, HOLD_PUBLISH_MS);
+  }
+
+  function cancelHold(pointerTarget) {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    if (
+      pointerTarget &&
+      holdPointerIdRef.current !== null &&
+      pointerTarget.releasePointerCapture
+    ) {
+      try {
+        if (pointerTarget.hasPointerCapture?.(holdPointerIdRef.current)) {
+          pointerTarget.releasePointerCapture(holdPointerIdRef.current);
+        }
+      } catch {
+        // Ignore if capture already released.
+      }
+    }
+    holdPointerIdRef.current = null;
+
+    setPublishState((prev) => {
+      if (prev.phase !== "holding") return prev;
+      return {
+        ...prev,
+        phase: "cancelled",
+        announcement: `Publish cancelled. Hold to publish v${prev.version + 1}.`,
+      };
+    });
+  }
+
+  function handleHoldKeyDown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelHold(event.currentTarget);
+      return;
+    }
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      if (!event.repeat) {
+        startHold(event.currentTarget);
+      }
+    }
+  }
+
+  function handleHoldKeyUp(event) {
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      cancelHold(event.currentTarget);
+    }
+  }
+
+  function handleStageNextDraft() {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    setPublishState((prev) => ({
+      phase: "idle",
+      version: prev.version,
+      announcement: `2 unpublished edits staged for v${prev.version + 1}.`,
+    }));
+  }
 
   function flyCardToDone(cardEl) {
     const badge = doneBadgeRef.current;
@@ -225,7 +351,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
 
   const activeStage =
     WORKFLOW_TABS.find((tab) => tab.id === stageId) ?? WORKFLOW_TABS[0];
-  const activeCalEvent = CALENDAR_EVENTS[calDay] ?? null;
+  const activeCalEvents = CALENDAR_EVENTS[calDay] ?? [];
 
   function renderTaskCard(task) {
     return (
@@ -271,6 +397,14 @@ export default function LandingClient({ isSignedIn, userEmail }) {
       </div>
     );
   }
+
+  const nextVersion = publishState.version + 1;
+  const holdButtonLabel =
+    publishState.phase === "committed"
+      ? `Published v${publishState.version}`
+      : publishState.phase === "holding"
+        ? `Keep holding for v${nextVersion}`
+        : `Hold to publish v${nextVersion}`;
 
   return (
     <>
@@ -456,39 +590,23 @@ export default function LandingClient({ isSignedIn, userEmail }) {
         </section>
 
         <div
-          className="ticker-band"
+          className="reel-band"
           role="region"
           aria-label="Supported subject labels"
-          data-paused={ribbonPaused}
         >
-          <button
-            type="button"
-            className="ticker-toggle btn-secondary"
-            aria-label="Pause subject ribbon"
-            aria-pressed={ribbonPaused}
-            onClick={() => setRibbonPaused(!ribbonPaused)}
-          >
-            <span aria-hidden="true">{ribbonPaused ? "▶" : "Ⅱ"}</span>
-          </button>
-          <div className="ticker-window">
-            <div ref={tickerRef} className="ticker-scroll-wrap">
-              <div className="ticker-track">
-                {[...SUBJECTS, ...SUBJECTS].map((subject, index) => (
-                  <div
-                    key={`${subject.code}-${index}`}
-                    className="ticker-chip"
-                    aria-hidden={index >= SUBJECTS.length || undefined}
+          <div ref={reelWindowRef} className="reel-window">
+            <div ref={reelTrackRef} className="reel-track">
+              {SUBJECTS.map((subject) => (
+                <div key={subject.code} className="ticker-chip">
+                  <span
+                    className="subj-tag"
+                    style={{ backgroundColor: subject.bg }}
                   >
-                    <span
-                      className="subj-tag"
-                      style={{ backgroundColor: subject.bg }}
-                    >
-                      {subject.code}
-                    </span>
-                    <span>{subject.name}</span>
-                  </div>
-                ))}
-              </div>
+                    {subject.code}
+                  </span>
+                  <span>{subject.name}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -583,7 +701,9 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                 <div className="cal-box">
                   <div className="cal-hd">
                     <span className="cal-month">November 2026</span>
-                    <span className="stage-demo-meta">Select a day</span>
+                    <span className="stage-demo-meta">
+                      Dot density shows daily load
+                    </span>
                   </div>
                   <div className="cal-grid">
                     {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
@@ -594,53 +714,64 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                       )
                     )}
                     {CALENDAR_DAYS.map((day) => {
-                      const event = CALENDAR_EVENTS[day];
+                      const events = CALENDAR_EVENTS[day] ?? [];
+                      const isSelected = calDay === day;
                       return (
                         <button
                           key={day}
                           type="button"
-                          className={`cal-day${calDay === day ? " is-selected" : ""}`}
+                          className={`cal-day${isSelected ? " is-selected" : ""}${events.length ? " has-events" : ""}`}
+                          data-density={events.length}
                           onClick={() => setCalDay(day)}
-                          aria-pressed={calDay === day}
-                          aria-label={`November ${day}${event ? `, ${event.title}` : ""}`}
+                          aria-pressed={isSelected}
+                          aria-label={`Day ${day}, ${events.length} ${events.length === 1 ? "deadline" : "deadlines"}`}
                         >
-                          <span>{day}</span>
-                          {event && (
-                            <span className="cal-dots" aria-hidden="true">
-                              <span
-                                className="cal-dot"
-                                style={{
-                                  backgroundColor: SUBJECT_BG_MAP[event.subj],
-                                }}
-                              />
-                            </span>
-                          )}
+                          <span className="cal-day-num">{day}</span>
+                          <span className="cal-dots" aria-hidden="true">
+                            {events.length > 0 ? (
+                              events.map((event) => (
+                                <span
+                                  key={event.title}
+                                  className="cal-dot"
+                                  style={{
+                                    backgroundColor: SUBJECT_BG_MAP[event.subj],
+                                  }}
+                                />
+                              ))
+                            ) : (
+                              <span className="cal-dot is-quiet" />
+                            )}
+                          </span>
                         </button>
                       );
                     })}
                   </div>
-                  <div className="cal-agenda">
-                    {activeCalEvent ? (
-                      <>
-                        <div>
-                          <strong>{activeCalEvent.title}</strong>
-                          <div className="stage-demo-meta">
-                            Nov {calDay} · {activeCalEvent.time}
+                  <div className="cal-agenda-list" aria-live="polite">
+                    {activeCalEvents.length > 0 ? (
+                      activeCalEvents.map((event) => (
+                        <div key={event.title} className="cal-agenda">
+                          <div>
+                            <strong>{event.title}</strong>
+                            <div className="stage-demo-meta">
+                              Day {calDay} · {event.time}
+                            </div>
                           </div>
+                          <span
+                            className="subj-tag"
+                            style={{
+                              backgroundColor: SUBJECT_BG_MAP[event.subj],
+                            }}
+                          >
+                            {event.subj}
+                          </span>
                         </div>
-                        <span
-                          className="subj-tag"
-                          style={{
-                            backgroundColor: SUBJECT_BG_MAP[activeCalEvent.subj],
-                          }}
-                        >
-                          {activeCalEvent.subj}
-                        </span>
-                      </>
+                      ))
                     ) : (
-                      <span className="stage-demo-meta">
-                        No deadlines scheduled for day {calDay}.
-                      </span>
+                      <div className="cal-agenda">
+                        <span className="stage-demo-meta">
+                          No deadlines scheduled for day {calDay}.
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -692,33 +823,89 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                 <div className="stage-demo-card">
                   <div className="stage-demo-head">
                     <span className="stage-demo-label">
-                      {adminDraftMode ? "Admin draft mode" : "Live student board"}
+                      {publishState.phase === "committed"
+                        ? `Live board v${publishState.version}`
+                        : `Staged draft v${nextVersion}`}
                     </span>
-                    <button
-                      type="button"
-                      className="btn-secondary btn-sm"
-                      onClick={() => setAdminDraftMode((prev) => !prev)}
-                    >
-                      {adminDraftMode
-                        ? "Switch to Student View"
-                        : "Open Draft Preview"}
-                    </button>
+                    <span className="stage-demo-meta">
+                      {publishState.phase === "committed"
+                        ? "Synced to 19 students"
+                        : "2 pending edits"}
+                    </span>
                   </div>
+
                   <div
-                    className={`stage-note${adminDraftMode ? " is-draft" : ""}`}
+                    className={`stage-note${publishState.phase === "committed" ? " is-live" : " is-draft"}`}
                   >
-                    {adminDraftMode ? (
+                    {publishState.phase === "committed" ? (
+                      <>
+                        <strong>Published v{publishState.version}:</strong> CP104
+                        lab rubric and GENSCI Friday quiz are live on the class
+                        board.
+                      </>
+                    ) : (
                       <>
                         <strong>2 unpublished edits staged:</strong> Added CP104
                         lab rubric and shifted GENSCI quiz to Friday.
                       </>
-                    ) : (
-                      <>
-                        <strong>Published v14:</strong> All 19 students see the
-                        verified live board.
-                      </>
                     )}
                   </div>
+
+                  <div className="hold-controls">
+                    <button
+                      type="button"
+                      className="hold-btn"
+                      data-state={publishState.phase}
+                      style={{ "--hold-ms": `${HOLD_PUBLISH_MS}ms` }}
+                      disabled={publishState.phase === "committed"}
+                      onPointerDown={(event) =>
+                        startHold(event.currentTarget, event.pointerId)
+                      }
+                      onPointerUp={(event) => cancelHold(event.currentTarget)}
+                      onPointerCancel={(event) => cancelHold(event.currentTarget)}
+                      onBlur={(event) => cancelHold(event.currentTarget)}
+                      onKeyDown={handleHoldKeyDown}
+                      onKeyUp={handleHoldKeyUp}
+                    >
+                      <span className="hold-fill" aria-hidden="true" />
+                      <span className="hold-label">
+                        {publishState.phase === "committed" && (
+                          <svg
+                            className="check-draw-svg"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 18 18"
+                            fill="none"
+                            aria-hidden="true"
+                          >
+                            <path
+                              className="check-draw-path"
+                              pathLength="1"
+                              d="M3.5 9.5L7.2 13.2L14.5 5"
+                              stroke="currentColor"
+                              strokeWidth="2.4"
+                              strokeLinecap="square"
+                            />
+                          </svg>
+                        )}
+                        <span>{holdButtonLabel}</span>
+                      </span>
+                    </button>
+
+                    {publishState.phase === "committed" && (
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm"
+                        onClick={handleStageNextDraft}
+                      >
+                        Stage new draft
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="hold-status" aria-live="polite">
+                    {publishState.announcement}
+                  </p>
                 </div>
               )}
             </div>

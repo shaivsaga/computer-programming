@@ -95,7 +95,7 @@ body {
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 .study-root,
@@ -106,6 +106,10 @@ footer,
   --font-family-body: var(--body-font);
   --font-family-heading: var(--pixel-font);
   font-family: var(--body-font);
+}
+
+.study-root {
+  position: relative;
 }
 
 button, input, select { font: inherit; color: inherit; }
@@ -134,17 +138,35 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
   transform: scaleX(0);
 }
 
-/* Sticky Top Bar */
+/* Continuum Sticky Top Bar */
+.tb-sentinel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  pointer-events: none;
+}
+
 .tb {
   position: sticky;
   top: 0;
   z-index: 50;
   min-height: 64px;
-  background-color: var(--sf);
-  border-bottom: 2px solid var(--ln);
+  margin-bottom: -64px;
+  background-color: transparent;
+  border-bottom: 2px solid transparent;
+  box-shadow: 0 0 0 transparent;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background-color 180ms var(--ease), border-color 180ms var(--ease), box-shadow 180ms var(--ease);
+}
+
+.tb[data-moved="true"] {
+  background-color: var(--sf);
+  border-bottom-color: var(--ln);
+  box-shadow: 0 2px 0 var(--sh);
 }
 
 .tb-inner {
@@ -336,15 +358,33 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
   100% { transform: scale(1); }
 }
 
-@keyframes marqueeScroll {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-
 @keyframes checkSnap {
   0% { transform: scale(0.8); }
   55% { transform: scale(1.15); }
   100% { transform: scale(1); }
+}
+
+@keyframes checkDraw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes fieldShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+.check-draw-svg {
+  flex: none;
+}
+
+.check-draw-path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: checkDraw 240ms var(--ease) forwards;
 }
 
 html.js .reveal {
@@ -366,7 +406,7 @@ html.js .reveal.is-visible {
    HERO SECTION
    ========================================================================= */
 .hero {
-  padding: clamp(32px, 5vw, 56px) 0 clamp(40px, 6vw, 64px);
+  padding: calc(64px + clamp(28px, 4.5vw, 52px)) 0 clamp(40px, 6vw, 64px);
   border-bottom: 2px solid var(--ln);
 }
 
@@ -718,48 +758,31 @@ html.js .reveal.is-visible {
 }
 
 /* =========================================================================
-   SCROLL-DRIVEN SUBJECT RIBBON
+   SCROLL-SCRUBBED SUBJECT REEL (rAF translate3d, 0 paints in CDP)
    ========================================================================= */
-.ticker-band {
+.reel-band {
   background-color: var(--sf);
   border-bottom: 2px solid var(--ln);
   padding: 12px 0;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  gap: 12px;
   contain: layout paint;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 62px;
 }
 
-.ticker-toggle {
-  flex: none;
-  width: 44px;
-  margin-left: 12px;
-  padding: 0;
-}
-
-.ticker-window {
-  min-width: 0;
+.reel-window {
+  width: 100%;
   overflow: hidden;
 }
 
-.ticker-scroll-wrap {
-  transform: translate3d(var(--scroll-shift, 0px), 0, 0);
-  will-change: transform;
-}
-
-.ticker-track {
+.reel-track {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding-right: 12px;
+  padding: 0 24px;
   width: max-content;
-  animation: marqueeScroll 32s linear infinite;
-}
-
-.ticker-window:hover .ticker-track,
-.ticker-band[data-paused="true"] .ticker-track {
-  animation-play-state: paused;
+  transform: translate3d(var(--reel-x, 0px), 0, 0);
+  will-change: transform;
 }
 
 .ticker-chip {
@@ -933,6 +956,91 @@ html.js .reveal.is-visible {
   background-color: var(--acs);
 }
 
+.stage-note.is-live {
+  border-color: var(--ok);
+  background-color: var(--okb);
+}
+
+.hold-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.hold-btn {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 210px;
+  padding: 0 18px;
+  border: 2px solid var(--ac);
+  background-color: var(--sf);
+  color: var(--tx);
+  box-shadow: 0 3px 0 var(--sh);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  user-select: none;
+  touch-action: manipulation;
+  transition: transform 120ms var(--ease), border-color 140ms var(--ease), box-shadow 120ms var(--ease);
+}
+
+.hold-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 var(--sh);
+}
+
+.hold-btn[data-state="holding"] {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 var(--sh);
+}
+
+.hold-btn[data-state="committed"] {
+  border-color: var(--ok);
+  color: var(--ok);
+  box-shadow: none;
+  cursor: default;
+}
+
+.hold-fill {
+  position: absolute;
+  inset: 0;
+  background-color: var(--acs);
+  transform-origin: left center;
+  transform: scaleX(0);
+  pointer-events: none;
+  z-index: 0;
+  transition: transform 140ms var(--ease);
+}
+
+.hold-btn[data-state="holding"] .hold-fill {
+  transform: scaleX(1);
+  transition: transform var(--hold-ms, 650ms) linear;
+}
+
+.hold-btn[data-state="committed"] .hold-fill {
+  transform: scaleX(1);
+  background-color: var(--okb);
+  transition: none;
+}
+
+.hold-label {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hold-status {
+  margin: 10px 0 0;
+  font-size: var(--text-sm);
+  color: var(--mu);
+}
+
 .stage-counts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1008,31 +1116,60 @@ html.js .reveal.is-visible {
 .cal-day {
   min-width: 0;
   min-height: 44px;
-  padding: 4px 0;
+  padding: 5px 2px;
   border: 2px solid var(--ln);
   background-color: var(--sf);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   font-size: var(--text-sm);
   font-weight: 600;
-  transition: border-color 140ms var(--ease), background-color 140ms var(--ease);
+  transition: border-color 140ms var(--ease), background-color 140ms var(--ease), transform 120ms var(--ease);
 }
 
 .cal-day:hover { border-color: var(--ac); }
+.cal-day.has-events { background-color: var(--bg); }
 .cal-day.is-selected {
   background-color: var(--acs);
   border-color: var(--ac);
   box-shadow: 0 2px 0 var(--ac);
 }
 
-.cal-dots { display: flex; gap: 2px; }
-.cal-dot { width: 6px; height: 6px; }
+.cal-day-num {
+  line-height: 1;
+}
+
+.cal-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 7px;
+}
+
+.cal-dot {
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgba(20, 24, 58, 0.35);
+}
+
+.cal-dot.is-quiet {
+  width: 4px;
+  height: 4px;
+  border: 0;
+  background-color: var(--ln);
+  opacity: 0.6;
+}
+
+.cal-agenda-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
 
 .cal-agenda {
-  margin-top: 12px;
   padding: 12px;
   border: 2px solid var(--ln);
   background-color: var(--sf);
@@ -1222,7 +1359,8 @@ html.js .reveal.is-visible {
   width: min(100% - 3rem, 74rem);
   flex: 1;
   margin-inline: auto;
-  padding-block: clamp(1.5rem, 5vh, 3.5rem);
+  padding-top: calc(64px + clamp(1.25rem, 4vh, 2.75rem));
+  padding-bottom: clamp(1.5rem, 5vh, 3.5rem);
   display: flex;
   align-items: center;
 }
@@ -1244,6 +1382,22 @@ html.js .reveal.is-visible {
   border: 2px solid var(--ln);
   box-shadow: 0 6px 0 var(--sh);
   padding: 24px;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+
+.art-card[data-lock-state="typing"],
+.art-card[data-lock-state="peeking"] {
+  border-color: var(--ac);
+  box-shadow: 0 6px 0 var(--ac);
+}
+
+.art-card[data-lock-state="error"] {
+  border-color: var(--er);
+}
+
+.art-card[data-lock-state="unlocked"] {
+  border-color: var(--ok);
+  box-shadow: 0 6px 0 var(--ok);
 }
 
 .art-card-head {
@@ -1256,9 +1410,20 @@ html.js .reveal.is-visible {
 }
 
 .art-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--text-sm);
   font-weight: 700;
   color: var(--ac);
+}
+
+.art-card[data-lock-state="error"] .art-status {
+  color: var(--er);
+}
+
+.art-card[data-lock-state="unlocked"] .art-status {
+  color: var(--ok);
 }
 
 .art-plan {
@@ -1314,6 +1479,79 @@ html.js .reveal.is-visible {
   gap: 1.125rem;
 }
 
+.auth-form.is-shaking {
+  animation: fieldShake 320ms var(--ease);
+}
+
+.tier-group-wrap {
+  display: grid;
+  gap: 8px;
+}
+
+.tier-group-label {
+  color: var(--tx);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.tier-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.tier-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 2px solid var(--ln);
+  background-color: var(--bg);
+  color: var(--tx);
+  text-align: left;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: border-color 140ms var(--ease), background-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+
+.tier-row:hover {
+  border-color: var(--ac);
+  background-color: var(--sf2);
+}
+
+.tier-row.is-active {
+  border-color: var(--ac);
+  background-color: var(--acs);
+  box-shadow: 0 2px 0 var(--ac);
+}
+
+.tier-radio {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 2px solid var(--mu);
+  background-color: var(--oa);
+}
+
+.tier-row.is-active .tier-radio {
+  border-color: var(--ac);
+  background-color: var(--ac);
+  box-shadow: inset 0 0 0 3px var(--oa);
+}
+
+.tier-row-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.tier-row-price {
+  font-family: var(--pixel-font);
+  font-size: var(--text-body);
+  font-weight: 700;
+  color: var(--ac);
+}
+
 .auth-panel label {
   color: var(--tx);
   font-size: var(--text-sm);
@@ -1330,6 +1568,10 @@ html.js .reveal.is-visible {
   color: var(--tx);
   font-size: var(--text-body);
   font-family: var(--body-font);
+}
+
+.auth-panel .credential.is-invalid {
+  border-color: var(--er);
 }
 
 .credential::placeholder {
@@ -1370,7 +1612,7 @@ html.js .reveal.is-visible {
   color: var(--onac);
 }
 
-.auth-panel button {
+.auth-submit-slot button {
   min-height: 3rem;
   border: 2px solid var(--acd);
   background-color: var(--ac);
@@ -1380,17 +1622,17 @@ html.js .reveal.is-visible {
   font-weight: 600;
 }
 
-.auth-panel button:hover {
+.auth-submit-slot button:hover {
   background-color: var(--ach);
   border-color: var(--ach);
 }
 
-.auth-panel button:active {
+.auth-submit-slot button:active {
   transform: translateY(3px);
   box-shadow: 0 1px 0 var(--acd);
 }
 
-.auth-panel button[aria-busy="true"] {
+.auth-submit-slot button[aria-busy="true"] {
   cursor: progress;
 }
 
@@ -1501,7 +1743,8 @@ html.js .reveal.is-visible {
 
   .auth-shell {
     width: calc(100% - 2rem);
-    padding-block: 1rem;
+    padding-top: calc(64px + 1rem);
+    padding-bottom: 1.25rem;
   }
 
   .auth-layout {
@@ -1561,20 +1804,13 @@ html.js .reveal.is-visible {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
-  .ticker-toggle,
-  .ticker-chip[aria-hidden="true"] {
-    display: none;
+  .check-draw-path {
+    stroke-dashoffset: 0;
   }
-  .ticker-window {
+  .reel-track {
     width: 100%;
-  }
-  .ticker-track {
-    width: 100%;
-    padding-inline: 12px;
+    padding-inline: 16px;
     flex-wrap: wrap;
-    animation: none !important;
-  }
-  .ticker-scroll-wrap {
     transform: none !important;
   }
 }

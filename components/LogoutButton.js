@@ -18,9 +18,9 @@ export default function LogoutButton() {
   }
 
   return (
-    <>
+    <div className="auth-submit-slot">
       {error && <p role="alert" className="error">{error}</p>}
       <Button type="button" variant="primary" width="100%" label="Log out" clickAction={handleLogout} />
-    </>
+    </div>
   );
 }
