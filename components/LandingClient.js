@@ -5,10 +5,12 @@ import Link from "next/link";
 import TopBar from "./TopBar";
 import { navigateOptions } from "@/lib/keyboard";
 import {
+  BOARD_COLUMNS,
   CALENDAR_DAYS,
   CALENDAR_EVENTS,
   HERO_FILTERS,
   INITIAL_HERO_TASKS,
+  NEXT_TASK_STATUS,
   PRICING_PLANS,
   SUBJECTS,
   SUBJECT_BG_MAP,
@@ -46,12 +48,13 @@ export default function LandingClient({ isSignedIn, userEmail }) {
   });
   const [billing, setBilling] = useState("term");
   const [activeSection, setActiveSection] = useState("top");
+  const [boardAnnouncement, setBoardAnnouncement] = useState("");
   const [toast, setToast] = useState("");
 
   const scrollRailRef = useRef(null);
   const reelWindowRef = useRef(null);
   const reelTrackRef = useRef(null);
-  const doneBadgeRef = useRef(null);
+  const badgeRefs = useRef({});
   const toastTimerRef = useRef(null);
   const holdTimerRef = useRef(null);
   const holdPointerIdRef = useRef(null);
@@ -282,8 +285,8 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     }));
   }
 
-  function flyCardToDone(cardEl) {
-    const badge = doneBadgeRef.current;
+  function flyCardToBadge(cardEl, targetStatus) {
+    const badge = badgeRefs.current[targetStatus];
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced || !cardEl || !badge || typeof cardEl.animate !== "function") {
       return;
@@ -323,22 +326,29 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     };
   }
 
-  function handleToggleTask(taskId, event) {
+  function handleAdvanceTask(taskId, event) {
     const targetTask = heroTasks.find((task) => task.id === taskId);
-    if (targetTask && !targetTask.done) {
+    if (!targetTask) return;
+    const nextStatus = NEXT_TASK_STATUS[targetTask.status] ?? "todo";
+    if (nextStatus === "progress" || nextStatus === "done") {
       const cardEl = event.currentTarget.closest(".task-card");
-      flyCardToDone(cardEl);
+      flyCardToBadge(cardEl, nextStatus);
     }
+    const targetColumn = BOARD_COLUMNS.find((col) => col.id === nextStatus);
     setHeroTasks((prev) =>
       prev.map((task) =>
-        task.id === taskId ? { ...task, done: !task.done } : task
+        task.id === taskId ? { ...task, status: nextStatus } : task
       )
+    );
+    setBoardAnnouncement(
+      `Moved ${targetTask.title} to ${targetColumn ? targetColumn.label : nextStatus}.`
     );
   }
 
   function handleResetDemo() {
     setHeroTasks(INITIAL_HERO_TASKS.map((task) => ({ ...task })));
     setHeroFilter("ALL");
+    setBoardAnnouncement("Demo board reset.");
     showToast("Demo board reset");
   }
 
@@ -346,27 +356,43 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     heroFilter === "ALL"
       ? heroTasks
       : heroTasks.filter((task) => task.subj === heroFilter);
-  const todos = filteredTasks.filter((task) => !task.done);
-  const dones = filteredTasks.filter((task) => task.done);
 
   const activeStage =
     WORKFLOW_TABS.find((tab) => tab.id === stageId) ?? WORKFLOW_TABS[0];
   const activeCalEvents = CALENDAR_EVENTS[calDay] ?? [];
 
   function renderTaskCard(task) {
+    const isProgress = task.status === "progress";
+    const isDone = task.status === "done";
+    const actionLabel = isProgress
+      ? `Mark ${task.title} as Done`
+      : isDone
+        ? `Move ${task.title} back to To Do`
+        : `Move ${task.title} to In Progress`;
+
     return (
       <div
         key={task.id}
-        className={`task-card${task.done ? " is-done-card" : ""}`}
+        className={`task-card${isProgress ? " is-progress-card" : isDone ? " is-done-card" : ""}`}
       >
         <button
           type="button"
-          className={`task-check${task.done ? " checked" : ""}`}
-          onClick={(event) => handleToggleTask(task.id, event)}
-          aria-pressed={task.done}
-          aria-label={`Mark ${task.title} as ${task.done ? "not started" : "done"}`}
+          className={`task-check${isProgress ? " in-progress" : isDone ? " checked" : ""}`}
+          onClick={(event) => handleAdvanceTask(task.id, event)}
+          aria-label={actionLabel}
         >
-          {task.done && (
+          {isProgress && (
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+            >
+              <rect x="5" y="5" width="6" height="6" fill="currentColor" />
+            </svg>
+          )}
+          {isDone && (
             <svg
               width="12"
               height="12"
@@ -389,8 +415,8 @@ export default function LandingClient({ isSignedIn, userEmail }) {
             >
               {task.subj}
             </span>
-            <span className={`due-pill ${task.done ? "is-ok" : task.tone}`}>
-              {task.done ? "Done locally" : task.due}
+            <span className={`due-pill ${isDone ? "is-ok" : task.tone}`}>
+              {isDone ? "Done locally" : task.due}
             </span>
           </div>
         </div>
@@ -433,27 +459,29 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                 <h1 className="hero-title stamp-1">
                   Every class deadline, calmly in one board.
                 </h1>
-                <p className="hero-sub stamp-2">
-                  One shared assignment board for your section. Track personal
-                  progress locally, inspect calendar deadlines, and check off
-                  work without noise.
-                </p>
-                <div className="hero-actions stamp-3">
-                  {isSignedIn ? (
-                    <Link className="btn-primary" href="/dashboard">
-                      Open account ({userEmail})
-                    </Link>
-                  ) : (
-                    <>
-                      <Link className="btn-primary" href="/signup">
-                        Create free account
+                <div className="hero-lead">
+                  <p className="hero-sub stamp-2">
+                    One shared assignment board for your section. Track personal
+                    progress locally, inspect calendar deadlines, and check off
+                    work without noise.
+                  </p>
+                  <div className="hero-actions stamp-3">
+                    {isSignedIn ? (
+                      <Link className="btn-primary" href="/dashboard">
+                        Open account ({userEmail})
                       </Link>
-                      <p className="hero-alt">
-                        Already registered?{" "}
-                        <Link href="/login">Log in to portal</Link>
-                      </p>
-                    </>
-                  )}
+                    ) : (
+                      <>
+                        <Link className="btn-primary" href="/signup">
+                          Create free account
+                        </Link>
+                        <p className="hero-alt">
+                          Already registered?{" "}
+                          <Link href="/login">Log in to portal</Link>
+                        </p>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -534,54 +562,51 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                   <div
                     className={`mini-cols${heroView === "list" ? " is-list" : ""}`}
                   >
-                    <div className="mini-col">
-                      <div className="mini-col-hd">
-                        <span>
-                          <span className="col-dot" aria-hidden="true" />
-                          To Do
-                        </span>
-                        <span className="count-badge">{todos.length}</span>
-                      </div>
-                      <div className="task-stack">
-                        {todos.length ? (
-                          todos.map(renderTaskCard)
-                        ) : (
-                          <div className="empty-stack">
-                            All clear in this view.
+                    {BOARD_COLUMNS.map((column) => {
+                      const items = filteredTasks.filter(
+                        (task) => task.status === column.id
+                      );
+                      return (
+                        <div key={column.id} className="mini-col">
+                          <div className="mini-col-hd">
+                            <span>
+                              <span
+                                className={`col-dot${column.dotClass ? ` ${column.dotClass}` : ""}`}
+                                aria-hidden="true"
+                              />
+                              {column.label}
+                            </span>
+                            <span
+                              ref={(el) => {
+                                badgeRefs.current[column.id] = el;
+                              }}
+                              className={`count-badge${column.badgeClass ? ` ${column.badgeClass}` : ""}`}
+                            >
+                              {items.length}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mini-col">
-                      <div className="mini-col-hd">
-                        <span>
-                          <span className="col-dot is-done" aria-hidden="true" />
-                          Done
-                        </span>
-                        <span
-                          ref={doneBadgeRef}
-                          className="count-badge is-done"
-                        >
-                          {dones.length}
-                        </span>
-                      </div>
-                      <div className="task-stack">
-                        {dones.length ? (
-                          dones.map(renderTaskCard)
-                        ) : (
-                          <div className="empty-stack">
-                            Check a task to move it here.
+                          <div className="task-stack">
+                            {items.length ? (
+                              items.map(renderTaskCard)
+                            ) : (
+                              <div className="empty-stack">
+                                {column.emptyText}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
                 <div className="board-hint">
                   <span>
-                    Select any checkbox to fly a card into Done.
+                    Select any task box to advance it from To Do to In Progress
+                    to Done.
+                  </span>
+                  <span className="board-live" aria-live="polite">
+                    {boardAnnouncement}
                   </span>
                 </div>
               </div>

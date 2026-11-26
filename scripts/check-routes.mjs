@@ -208,6 +208,80 @@ async function continuumHeaderAndReel(page) {
   assert.equal(await header.getAttribute("data-moved"), "false");
 }
 
+async function kanbanBoardAndTaxonomy(page) {
+  const getColStats = async () =>
+    page.locator(".mini-col").evaluateAll((cols) =>
+      cols.map((col) => ({
+        title: col.querySelector(".mini-col-hd span")?.textContent.trim() ?? "",
+        count: col.querySelector(".count-badge")?.textContent.trim() ?? "",
+        width: Math.round(col.getBoundingClientRect().width),
+      }))
+    );
+
+  const initial = await getColStats();
+  assert.deepEqual(
+    initial.map((c) => c.title),
+    ["To Do", "In Progress", "Done"]
+  );
+  assert.deepEqual(
+    initial.map((c) => c.count),
+    ["3", "1", "0"]
+  );
+  if (page.viewportSize().width === 1440) {
+    for (const col of initial) {
+      assert(col.width >= 300, `Expected desktop Kanban column >= 300px, got ${col.width}px`);
+    }
+  }
+
+  // Advance "Oral recitation: Newton's laws": To Do -> In Progress -> Done -> To Do
+  await page
+    .getByRole("button", { name: "Move Oral recitation: Newton's laws to In Progress" })
+    .click();
+  assert.deepEqual(
+    (await getColStats()).map((c) => c.count),
+    ["2", "2", "0"]
+  );
+  const inProgressBtn = page.getByRole("button", {
+    name: "Mark Oral recitation: Newton's laws as Done",
+  });
+  assert(await inProgressBtn.evaluate((el) => el.classList.contains("in-progress")));
+
+  await inProgressBtn.click();
+  assert.deepEqual(
+    (await getColStats()).map((c) => c.count),
+    ["2", "1", "1"]
+  );
+  const doneBtn = page.getByRole("button", {
+    name: "Move Oral recitation: Newton's laws back to To Do",
+  });
+  assert(await doneBtn.evaluate((el) => el.classList.contains("checked")));
+
+  await doneBtn.click();
+  assert.deepEqual(
+    (await getColStats()).map((c) => c.count),
+    ["3", "1", "0"]
+  );
+
+  await page.getByRole("button", { name: "Reset demo" }).click();
+  assert.deepEqual(
+    (await getColStats()).map((c) => c.count),
+    ["3", "1", "0"]
+  );
+
+  const reelText = await page.locator(".reel-track").innerText();
+  for (const subjectName of [
+    "Personal Development",
+    "Mabisang Komunikasyon",
+    "Effective Communication",
+    "Computer Programming 104",
+    "Finite Mathematics 101",
+    "Pag-aaral ng Kasaysayang Lipunang Pilipino",
+  ]) {
+    assert(reelText.includes(subjectName), `Missing corrected subject name: ${subjectName}`);
+  }
+  console.log("kanban 3-column workflow and taxonomy verified");
+}
+
 async function dotCalendarAndHoldPublish(page) {
   await page.getByRole("tab", { name: "Calm Calendar" }).click();
   const day27 = page.getByRole("button", { name: /^Day 27,/ });
@@ -223,7 +297,7 @@ async function dotCalendarAndHoldPublish(page) {
   assert.equal(await day28.getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator(".cal-agenda").count(), 2);
   const agendaText = await page.locator(".cal-agenda-list").innerText();
-  assert(agendaText.includes("Newton's laws") && agendaText.includes("chapter 7"));
+  assert(agendaText.includes("Newton's laws") && agendaText.includes("Cavite Mutiny"));
 
   // Hold to publish finite state machine
   await page.getByRole("tab", { name: "Draft & Publish" }).click();
@@ -391,6 +465,7 @@ try {
         await page.getByRole("button", { name: "Switch to light theme" }).waitFor();
       }
       await auditPage(page, "/", theme);
+      await kanbanBoardAndTaxonomy(page);
       await checkGroupKeyboard(page, 4);
       await continuumHeaderAndReel(page);
       await dotCalendarAndHoldPublish(page);

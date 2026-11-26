@@ -412,17 +412,21 @@ html.js .reveal.is-visible {
 
 .hero-grid {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.18fr);
-  gap: clamp(24px, 4vw, 44px);
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(24px, 3.5vw, 36px);
+  align-items: start;
 }
 
 .hero-copy {
   min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.85fr);
+  gap: 16px 36px;
+  align-items: end;
 }
 
 .hero-title {
-  margin: 0 0 18px;
+  margin: 0;
   font-family: var(--pixel-font);
   font-size: clamp(2.35rem, 4.4vw, 3.75rem);
   line-height: 0.98;
@@ -431,8 +435,14 @@ html.js .reveal.is-visible {
   color: var(--tx);
 }
 
+.hero-lead {
+  min-width: 0;
+  display: grid;
+  gap: 18px;
+}
+
 .hero-sub {
-  margin: 0 0 24px;
+  margin: 0;
   font-size: var(--text-body);
   line-height: 1.55;
   color: var(--mu);
@@ -563,7 +573,7 @@ html.js .reveal.is-visible {
 
 .mini-cols {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -598,6 +608,10 @@ html.js .reveal.is-visible {
   background-color: var(--ac);
 }
 
+.col-dot.is-progress {
+  background-color: var(--wn);
+}
+
 .col-dot.is-done {
   background-color: var(--ok);
 }
@@ -615,6 +629,12 @@ html.js .reveal.is-visible {
   font-size: var(--text-sm);
   font-weight: 700;
   line-height: 1;
+}
+
+.count-badge.is-progress {
+  background-color: var(--wnb);
+  border-color: var(--wn);
+  color: var(--wn);
 }
 
 .count-badge.is-done {
@@ -657,6 +677,10 @@ html.js .reveal.is-visible {
   transform: translateY(-1px);
 }
 
+.task-card.is-progress-card {
+  border-color: var(--ac);
+}
+
 .task-card.is-done-card {
   background-color: var(--sf2);
   box-shadow: none;
@@ -689,6 +713,13 @@ html.js .reveal.is-visible {
 
 .task-check:hover {
   border-color: var(--ac);
+}
+
+.task-check.in-progress {
+  background-color: var(--acs);
+  border-color: var(--ac);
+  color: var(--ac);
+  animation: checkSnap 200ms var(--ease);
 }
 
 .task-check.checked {
@@ -740,11 +771,21 @@ html.js .reveal.is-visible {
 .due-pill.is-ok { color: var(--ok); background-color: var(--okb); }
 
 .board-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 10px 14px;
   background-color: var(--sf2);
   border-top: 2px solid var(--ln);
   font-size: var(--text-sm);
   color: var(--mu);
+}
+
+.board-live {
+  color: var(--tx);
+  font-weight: 600;
 }
 
 /* Flying Ghost Card */
@@ -1675,6 +1716,8 @@ html.js .reveal.is-visible {
    ========================================================================= */
 @media (max-width: 920px) {
   .hero-grid,
+  .hero-copy,
+  .mini-cols,
   .stage-panel,
   .auth-layout,
   .cards-3 {
