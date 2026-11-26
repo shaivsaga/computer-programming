@@ -16,6 +16,7 @@ const COPY = {
     altText: "No account yet?",
     altHref: "/signup",
     altLabel: "Sign up",
+    idleStatus: "Portal gate locked",
   },
   signup: {
     title: "Sign up",
@@ -25,13 +26,15 @@ const COPY = {
     altText: "Already have an account?",
     altHref: "/login",
     altLabel: "Log in",
+    idleStatus: "Portal gate new key",
   },
 };
 
-export default function AuthForm({ mode }) {
+export default function AuthForm({ mode, selectedPlan = "" }) {
   const copy = COPY[mode];
   const submitting = useRef(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -66,8 +69,23 @@ export default function AuthForm({ mode }) {
   }
 
   const isSignup = mode === "signup";
+  const statusLabel = loading
+    ? "Verifying session"
+    : passwordFocused
+      ? "Entering passkey"
+      : copy.idleStatus;
+
+  const altHref = selectedPlan
+    ? `${copy.altHref}?plan=${encodeURIComponent(selectedPlan)}`
+    : copy.altHref;
+
   return (
-    <AuthShell title={copy.title} sprite={isSignup ? "key" : "closed"}>
+    <AuthShell
+      title={copy.title}
+      sprite={isSignup ? "key" : "closed"}
+      statusLabel={statusLabel}
+      planName={selectedPlan}
+    >
       <form className="auth-form" method="post" onSubmit={handleSubmit}>
         <Field label="Email" inputID="email">
           <input
@@ -90,12 +108,26 @@ export default function AuthForm({ mode }) {
             aria-describedby={isSignup ? "password-hint" : undefined}
             minLength={isSignup ? 8 : undefined}
             maxLength={72}
+            onFocus={() => setPasswordFocused(true)}
+            onBlur={() => setPasswordFocused(false)}
             required
           />
-          {isSignup && <p id="password-hint" className="hint">At least 8 characters.</p>}
+          {isSignup && (
+            <p id="password-hint" className="hint">
+              At least 8 characters.
+            </p>
+          )}
         </Field>
-        <CheckboxInput label="Show password" value={showPassword} onChange={setShowPassword} />
-        {error && <p role="alert" className="error">{error}</p>}
+        <CheckboxInput
+          label="Show password"
+          value={showPassword}
+          onChange={setShowPassword}
+        />
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
         <Button
           type="submit"
           variant="primary"
@@ -104,7 +136,9 @@ export default function AuthForm({ mode }) {
           label={loading ? "Please wait…" : copy.button}
         />
       </form>
-      <p className="alt">{copy.altText} <Link href={copy.altHref}>{copy.altLabel}</Link></p>
+      <p className="alt">
+        {copy.altText} <Link href={altHref}>{copy.altLabel}</Link>
+      </p>
     </AuthShell>
   );
 }

@@ -5,7 +5,7 @@ import LogoutButton from "@/components/LogoutButton";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
-  title: "Account | Login App",
+  title: "Account | TaskTracker",
   description: "View your signed-in account.",
 };
 
@@ -14,7 +14,12 @@ export default async function DashboardPage() {
   if (!user) redirect("/login");
 
   return (
-    <AuthShell title="Account" sprite="open">
+    <AuthShell
+      title="Account"
+      sprite="open"
+      isSignedIn
+      statusLabel="Session active"
+    >
       <dl className="account-details">
         <dt>Signed in as</dt>
         <dd>{user.email}</dd>
