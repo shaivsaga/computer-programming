@@ -1,25 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Button } from "@astryxdesign/core/Button";
 
 export default function LogoutButton() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   async function handleLogout() {
-    setLoading(true);
+    setError("");
     try {
-      await fetch("/api/logout", { method: "POST" });
-    } finally {
-      router.replace("/login");
-      router.refresh();
+      const response = await fetch("/api/logout", { method: "POST" });
+      if (!response.ok) throw new Error("Logout failed");
+      window.location.replace("/login");
+    } catch {
+      setError("Couldn’t log out. Try again.");
     }
   }
 
   return (
-    <button type="button" onClick={handleLogout} disabled={loading}>
-      {loading ? "Please wait…" : "Log out"}
-    </button>
+    <>
+      {error && <p role="alert" className="error">{error}</p>}
+      <Button type="button" variant="primary" width="100%" label="Log out" clickAction={handleLogout} />
+    </>
   );
 }

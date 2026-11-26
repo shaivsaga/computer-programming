@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
+import { Button } from "@astryxdesign/core/Button";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { Field } from "@astryxdesign/core/Field";
+import AuthShell from "./AuthShell";
 import Link from "next/link";
 
 const COPY = {
@@ -27,15 +30,16 @@ const COPY = {
 
 export default function AuthForm({ mode }) {
   const copy = COPY[mode];
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const submitting = useRef(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (submitting.current) return;
+    const fields = new FormData(event.currentTarget);
+    submitting.current = true;
     setError("");
     setLoading(true);
 
@@ -43,78 +47,64 @@ export default function AuthForm({ mode }) {
       const res = await fetch(copy.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email: fields.get("email"),
+          password: fields.get("password"),
+        }),
       });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        setError(data.error || "Something went wrong. Try again.");
-        setLoading(false);
+      if (res.ok) {
+        window.location.replace("/dashboard");
         return;
       }
-
-      router.replace("/dashboard");
-      router.refresh();
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Something went wrong. Try again.");
     } catch {
-      setError("Could not reach the server.");
-      setLoading(false);
+      setError("Could not reach the server. Try again.");
     }
+    submitting.current = false;
+    setLoading(false);
   }
 
+  const isSignup = mode === "signup";
   return (
-    <main className="card">
-      <h1>{copy.title}</h1>
-
-      <form onSubmit={handleSubmit}>
-        <div className="field">
-          <label htmlFor="email">Email</label>
+    <AuthShell title={copy.title} sprite={isSignup ? "key" : "closed"}>
+      <form className="auth-form" method="post" onSubmit={handleSubmit}>
+        <Field label="Email" inputID="email">
           <input
+            className="credential"
             id="email"
+            name="email"
             type="email"
             autoComplete="email"
+            placeholder="you@example.com"
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
           />
-        </div>
-
-        <div className="field">
-          <label htmlFor="password">Password</label>
+        </Field>
+        <Field label="Password" inputID="password">
           <input
+            className="credential"
             id="password"
+            name="password"
             type={showPassword ? "text" : "password"}
             autoComplete={copy.autoComplete}
-            required
-            minLength={mode === "signup" ? 8 : undefined}
+            aria-describedby={isSignup ? "password-hint" : undefined}
+            minLength={isSignup ? 8 : undefined}
             maxLength={72}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            required
           />
-          <label className="show-password">
-            <input
-              type="checkbox"
-              checked={showPassword}
-              onChange={(e) => setShowPassword(e.target.checked)}
-            />{" "}
-            Show password
-          </label>
-          {mode === "signup" && <p className="hint">At least 8 characters.</p>}
-        </div>
-
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-
-        <button type="submit" disabled={loading}>
-          {loading ? "Please wait…" : copy.button}
-        </button>
+          {isSignup && <p id="password-hint" className="hint">At least 8 characters.</p>}
+        </Field>
+        <CheckboxInput label="Show password" value={showPassword} onChange={setShowPassword} />
+        {error && <p role="alert" className="error">{error}</p>}
+        <Button
+          type="submit"
+          variant="primary"
+          width="100%"
+          isLoading={loading}
+          label={loading ? "Please wait…" : copy.button}
+        />
       </form>
-
-      <p className="alt">
-        {copy.altText} <Link href={copy.altHref}>{copy.altLabel}</Link>
-      </p>
-    </main>
+      <p className="alt">{copy.altText} <Link href={copy.altHref}>{copy.altLabel}</Link></p>
+    </AuthShell>
   );
 }

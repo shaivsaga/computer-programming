@@ -1,14 +1,17 @@
 import "./globals.css";
+import Providers from "./providers";
 
 export const metadata = {
   title: "Login App",
-  description: "Email and password login backed by MySQL.",
+  description: "Create an account or log in with your email and password.",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

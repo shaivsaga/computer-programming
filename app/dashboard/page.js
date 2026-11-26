@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import AuthShell from "@/components/AuthShell";
 import LogoutButton from "@/components/LogoutButton";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
-  title: "Dashboard | Login App",
-  description: "Your account dashboard.",
+  title: "Account | Login App",
+  description: "View your signed-in account.",
 };
 
 export default async function DashboardPage() {
@@ -13,12 +14,12 @@ export default async function DashboardPage() {
   if (!user) redirect("/login");
 
   return (
-    <main className="card">
-      <h1>Dashboard</h1>
-      <p>
-        You are logged in as <strong>{user.email}</strong>.
-      </p>
+    <AuthShell title="Account" sprite="open">
+      <dl className="account-details">
+        <dt>Signed in as</dt>
+        <dd>{user.email}</dd>
+      </dl>
       <LogoutButton />
-    </main>
+    </AuthShell>
   );
 }
