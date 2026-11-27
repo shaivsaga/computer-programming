@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import TopBar from "./TopBar";
+import { useStudyTheme } from "@/app/providers";
 import { navigateOptions } from "@/lib/keyboard";
 import {
   BOARD_COLUMNS,
@@ -16,6 +23,25 @@ import {
   SUBJECT_BG_MAP,
   WORKFLOW_TABS,
 } from "@/lib/landing-data";
+import {
+  FLIGHT_CARD_MS,
+  FLIP_REFLOW_MS,
+  FLUID_EASE,
+  TRIAGE_ANTICIPATION_MS,
+  TRIAGE_CARD_MS,
+  TRIAGE_STAGGER_MS,
+  captureRects,
+  createAnimationRegistry,
+  hasSeenTriage,
+  markTriageSeen,
+  playFlip,
+  playIndicatorGlide,
+  prefersReducedMotion,
+  spawnAllClearCanvasBurst,
+} from "@/lib/motion";
+
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 const HERO_VIEW_TABS = [
   { id: "board", label: "Board" },
@@ -33,11 +59,14 @@ const HOLD_PUBLISH_MS = 650;
 
 export default function LandingClient({ isSignedIn, userEmail }) {
   const uid = useId();
+  const { focusSubject, setFocusSubject } = useStudyTheme();
+
   const [heroTasks, setHeroTasks] = useState(() =>
     INITIAL_HERO_TASKS.map((task) => ({ ...task }))
   );
   const [heroFilter, setHeroFilter] = useState("ALL");
   const [heroView, setHeroView] = useState("board");
+  const [triagePhase, setTriagePhase] = useState("settled"); // "pile" | "converging" | "settled"
   const [stageId, setStageId] = useState("board");
   const [calDay, setCalDay] = useState(27);
   const [qrSeed, setQrSeed] = useState(1);
@@ -51,13 +80,38 @@ export default function LandingClient({ isSignedIn, userEmail }) {
   const [boardAnnouncement, setBoardAnnouncement] = useState("");
   const [toast, setToast] = useState("");
 
+  const boardFrameRef = useRef(null);
+  const boardBodyRef = useRef(null);
+  const heroFilterGroupRef = useRef(null);
+  const heroViewGroupRef = useRef(null);
+  const stageTabsRef = useRef(null);
+  const billingGroupRef = useRef(null);
   const scrollRailRef = useRef(null);
   const reelWindowRef = useRef(null);
   const reelTrackRef = useRef(null);
+  const workflowSectionRef = useRef(null);
+  const workflowRoutePathRef = useRef(null);
   const badgeRefs = useRef({});
   const toastTimerRef = useRef(null);
   const holdTimerRef = useRef(null);
   const holdPointerIdRef = useRef(null);
+
+  const triagePhaseRef = useRef("settled");
+  const triageTimerRef = useRef(null);
+  const triageRegistryRef = useRef(null);
+  const flipRegistryRef = useRef(null);
+  const allClearCancelRef = useRef(() => {});
+  const pendingFlipRef = useRef(null);
+  const pendingIndicatorRef = useRef(null);
+  const replayPendingRef = useRef(false);
+  const prevAllDoneRef = useRef(false);
+
+  if (!triageRegistryRef.current) {
+    triageRegistryRef.current = createAnimationRegistry();
+  }
+  if (!flipRegistryRef.current) {
+    flipRegistryRef.current = createAnimationRegistry();
+  }
 
   const boardViewPanelId = `${uid}-board-view-panel`;
   const stagePanelId = `${uid}-stage-panel`;
@@ -68,6 +122,221 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     toastTimerRef.current = setTimeout(() => setToast(""), 2400);
   }
 
+  function settleTriageImmediately() {
+    if (triageTimerRef.current) {
+      clearTimeout(triageTimerRef.current);
+      triageTimerRef.current = null;
+    }
+    triageRegistryRef.current?.cancelAll();
+    if (typeof document !== "undefined") {
+      delete document.documentElement.dataset.triage;
+    }
+    if (triagePhaseRef.current !== "settled") {
+      triagePhaseRef.current = "settled";
+      setTriagePhase("settled");
+    }
+  }
+
+  function runTriageSequence() {
+    if (typeof window === "undefined") return;
+    if (triageTimerRef.current) {
+      clearTimeout(triageTimerRef.current);
+      triageTimerRef.current = null;
+    }
+    triageRegistryRef.current?.cancelAll();
+    flipRegistryRef.current?.cancelAll();
+    delete document.documentElement.dataset.triage;
+
+    if (prefersReducedMotion()) {
+      triagePhaseRef.current = "settled";
+      setTriagePhase("settled");
+      return;
+    }
+
+    const bodyEl = boardBodyRef.current;
+    if (!bodyEl) {
+      triagePhaseRef.current = "settled";
+      setTriagePhase("settled");
+      return;
+    }
+
+    const cards = Array.from(bodyEl.querySelectorAll(".task-card"));
+    const headers = Array.from(bodyEl.querySelectorAll(".mini-col-hd"));
+    const badges = Array.from(bodyEl.querySelectorAll(".count-badge"));
+    if (cards.length < 2) {
+      triagePhaseRef.current = "settled";
+      setTriagePhase("settled");
+      return;
+    }
+
+    const bodyRect = bodyEl.getBoundingClientRect();
+    const cardRects = cards.map((card) => card.getBoundingClientRect());
+    const stepY = bodyRect.width > 500 ? 34 : 36;
+    const stackTop = bodyRect.top + 18;
+
+    const pileOffsets = cardRects.map((rect, idx) => {
+      const centerLeft = bodyRect.left + bodyRect.width / 2 - rect.width / 2;
+      const jitter = (idx % 2 === 0 ? -1 : 1) * (bodyRect.width > 500 ? 10 : 4);
+      const clampedLeft = Math.max(
+        bodyRect.left + 8,
+        Math.min(bodyRect.right - rect.width - 8, centerLeft + jitter)
+      );
+      const clampedTop = Math.max(
+        bodyRect.top + 8,
+        Math.min(bodyRect.bottom - rect.height - 8, stackTop + idx * stepY)
+      );
+      return {
+        dx: Math.round(clampedLeft - rect.left),
+        dy: Math.round(clampedTop - rect.top),
+      };
+    });
+
+    triagePhaseRef.current = "pile";
+    setTriagePhase("pile");
+
+    const reg = triageRegistryRef.current;
+    const holdAnims = cards.map((card, idx) => {
+      const { dx, dy } = pileOffsets[idx];
+      return reg.track(
+        card.animate(
+          [
+            { transform: `translate3d(${dx}px, ${dy}px, 0)`, offset: 0 },
+            { transform: `translate3d(${dx}px, ${dy}px, 0)`, offset: 0.72 },
+            { transform: `translate3d(${dx}px, ${dy - 4}px, 0)`, offset: 1 },
+          ],
+          {
+            duration: TRIAGE_ANTICIPATION_MS,
+            easing: "steps(3, end)",
+            fill: "forwards",
+          }
+        )
+      );
+    });
+
+    triageTimerRef.current = setTimeout(() => {
+      triageTimerRef.current = null;
+      if (triagePhaseRef.current !== "pile") return;
+
+      triagePhaseRef.current = "converging";
+      setTriagePhase("converging");
+
+      for (const anim of holdAnims) {
+        try {
+          anim.cancel();
+        } catch {
+          // Ignore cancelled handles.
+        }
+      }
+
+      const convergeAnims = cards.map((card, idx) => {
+        const { dx, dy } = pileOffsets[idx];
+        return reg.track(
+          card.animate(
+            [
+              { transform: `translate3d(${dx}px, ${dy - 4}px, 0)` },
+              { transform: "translate3d(0px, 0px, 0)" },
+            ],
+            {
+              duration: TRIAGE_CARD_MS,
+              delay: idx * TRIAGE_STAGGER_MS,
+              easing: FLUID_EASE,
+              fill: "backwards",
+            }
+          )
+        );
+      });
+
+      headers.forEach((hd) => {
+        reg.track(
+          hd.animate([{ opacity: 0 }, { opacity: 1 }], {
+            duration: 220,
+            delay: 140,
+            easing: "steps(4, end)",
+            fill: "backwards",
+          })
+        );
+      });
+
+      badges.forEach((badge) => {
+        reg.track(
+          badge.animate(
+            [
+              { transform: "scale(0.86)" },
+              { transform: "scale(1.16)" },
+              { transform: "scale(1)" },
+            ],
+            {
+              duration: 220,
+              delay: 240,
+              easing: "steps(4, end)",
+              fill: "none",
+            }
+          )
+        );
+      });
+
+      Promise.all(
+        convergeAnims.map((anim) => anim.finished.catch(() => {}))
+      ).then(() => {
+        if (triagePhaseRef.current === "converging") {
+          settleTriageImmediately();
+        }
+      });
+    }, TRIAGE_ANTICIPATION_MS);
+  }
+
+  // Trigger opening Desk Triage once per session without blocking SSR hydration.
+  useIsomorphicLayoutEffect(() => {
+    const preFlag =
+      typeof document !== "undefined" &&
+      document.documentElement.dataset.triage === "pending";
+    if (typeof document !== "undefined") {
+      delete document.documentElement.dataset.triage;
+    }
+    if ((preFlag || !hasSeenTriage()) && !prefersReducedMotion()) {
+      markTriageSeen();
+      runTriageSequence();
+    }
+    return () => {
+      if (triageTimerRef.current) clearTimeout(triageTimerRef.current);
+      triageRegistryRef.current?.cancelAll();
+      flipRegistryRef.current?.cancelAll();
+      allClearCancelRef.current?.();
+    };
+  }, []);
+
+  // Run pending FLIP animations, indicator glides, or deferred replay after state updates.
+  useIsomorphicLayoutEffect(() => {
+    if (replayPendingRef.current) {
+      replayPendingRef.current = false;
+      pendingFlipRef.current = null;
+      pendingIndicatorRef.current = null;
+      runTriageSequence();
+      return;
+    }
+
+    if (pendingFlipRef.current) {
+      const prevRects = pendingFlipRef.current;
+      pendingFlipRef.current = null;
+      if (boardBodyRef.current && triagePhaseRef.current === "settled") {
+        flipRegistryRef.current?.cancelAll();
+        playFlip(boardBodyRef.current, prevRects, {
+          duration: FLIP_REFLOW_MS,
+          easing: FLUID_EASE,
+          registry: flipRegistryRef.current,
+        });
+      }
+    }
+
+    if (pendingIndicatorRef.current) {
+      const { groupEl, prevRect } = pendingIndicatorRef.current;
+      pendingIndicatorRef.current = null;
+      playIndicatorGlide(groupEl, prevRect, {
+        registry: flipRegistryRef.current,
+      });
+    }
+  }, [heroTasks, heroFilter, heroView, stageId, billing]);
+
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -75,8 +344,8 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     };
   }, []);
 
-  // Single rAF scroll loop driving the progress rail, active nav section, and
-  // compositor-only subject reel scrub (0 paints, 0 layouts in CDP measurement).
+  // Single rAF scroll loop driving progress rail, active nav section,
+  // compositor-only subject reel scrub, and #workflow SVG study route trace.
   useEffect(() => {
     let frameId = 0;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -105,6 +374,20 @@ export default function LandingClient({ isSignedIn, userEmail }) {
           reelTrackRef.current.style.setProperty(
             "--reel-x",
             `${shift.toFixed(1)}px`
+          );
+        }
+      }
+
+      if (workflowRoutePathRef.current && workflowSectionRef.current) {
+        if (reduced.matches) {
+          workflowRoutePathRef.current.style.strokeDashoffset = "0";
+        } else {
+          const wfRect = workflowSectionRef.current.getBoundingClientRect();
+          const vh = window.innerHeight || 900;
+          const raw = (vh * 0.86 - wfRect.top) / Math.max(200, vh * 0.65);
+          const wfProgress = Math.min(1, Math.max(0, raw));
+          workflowRoutePathRef.current.style.strokeDashoffset = String(
+            (1 - wfProgress).toFixed(4)
           );
         }
       }
@@ -174,6 +457,87 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     }
   }, [stageId]);
 
+  const filteredTasks =
+    heroFilter === "ALL"
+      ? heroTasks
+      : heroTasks.filter((task) => task.subj === heroFilter);
+  const isAllDone =
+    filteredTasks.length > 0 &&
+    filteredTasks.every((task) => task.status === "done");
+
+  useEffect(() => {
+    if (isAllDone && !prevAllDoneRef.current && triagePhase === "settled") {
+      allClearCancelRef.current?.();
+      const colors = [
+        ...new Set(
+          filteredTasks.map((t) => SUBJECT_BG_MAP[t.subj]).filter(Boolean)
+        ),
+      ];
+      allClearCancelRef.current = spawnAllClearCanvasBurst(
+        boardFrameRef.current,
+        colors
+      );
+    } else if (!isAllDone) {
+      allClearCancelRef.current?.();
+      allClearCancelRef.current = () => {};
+    }
+    prevAllDoneRef.current = isAllDone;
+  }, [isAllDone, triagePhase, filteredTasks]);
+
+  function captureBoardAndIndicator(groupEl) {
+    if (!prefersReducedMotion()) {
+      if (boardBodyRef.current && triagePhaseRef.current === "settled") {
+        pendingFlipRef.current = captureRects(
+          boardBodyRef.current,
+          "[data-flip-id]"
+        );
+      }
+      if (groupEl) {
+        const glide = groupEl.querySelector(".seg-active-glide");
+        if (glide) {
+          pendingIndicatorRef.current = {
+            groupEl,
+            prevRect: glide.getBoundingClientRect(),
+          };
+        }
+      }
+    }
+  }
+
+  function handleFilterChange(subj) {
+    settleTriageImmediately();
+    captureBoardAndIndicator(heroFilterGroupRef.current);
+    setHeroFilter(subj);
+    setFocusSubject(subj);
+  }
+
+  function handleViewChange(viewId) {
+    settleTriageImmediately();
+    captureBoardAndIndicator(heroViewGroupRef.current);
+    setHeroView(viewId);
+  }
+
+  function handleStageChange(nextStageId) {
+    captureBoardAndIndicator(stageTabsRef.current);
+    setStageId(nextStageId);
+  }
+
+  function handleBillingChange(optionId) {
+    captureBoardAndIndicator(billingGroupRef.current);
+    setBilling(optionId);
+  }
+
+  function handleReelSubjectClick(code) {
+    settleTriageImmediately();
+    setFocusSubject(code);
+    if (HERO_FILTERS.includes(code)) {
+      captureBoardAndIndicator(heroFilterGroupRef.current);
+      setHeroFilter(code);
+    } else {
+      showToast(`Focused on ${code}`);
+    }
+  }
+
   function commitPublish() {
     if (holdTimerRef.current) {
       clearTimeout(holdTimerRef.current);
@@ -196,13 +560,16 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     if (publishState.phase === "committed" || publishState.phase === "holding") {
       return;
     }
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) {
+    if (prefersReducedMotion()) {
       commitPublish();
       return;
     }
 
-    if (pointerTarget && pointerId !== undefined && pointerTarget.setPointerCapture) {
+    if (
+      pointerTarget &&
+      pointerId !== undefined &&
+      pointerTarget.setPointerCapture
+    ) {
       try {
         pointerTarget.setPointerCapture(pointerId);
         holdPointerIdRef.current = pointerId;
@@ -285,16 +652,21 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     }));
   }
 
-  function flyCardToBadge(cardEl, targetStatus) {
+  function flyCardToBadge(cardEl, targetStatus, subjectCode) {
     const badge = badgeRefs.current[targetStatus];
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced || !cardEl || !badge || typeof cardEl.animate !== "function") {
+    if (
+      prefersReducedMotion() ||
+      !cardEl ||
+      !badge ||
+      typeof cardEl.animate !== "function"
+    ) {
       return;
     }
 
     const rect = cardEl.getBoundingClientRect();
     const target = badge.getBoundingClientRect();
     const ghost = cardEl.cloneNode(true);
+    const subjColor = SUBJECT_BG_MAP[subjectCode];
     ghost.classList.add("motion-ghost");
     ghost.setAttribute("aria-hidden", "true");
     Object.assign(ghost.style, {
@@ -302,6 +674,12 @@ export default function LandingClient({ isSignedIn, userEmail }) {
       top: `${rect.top}px`,
       width: `${rect.width}px`,
       height: `${rect.height}px`,
+      ...(subjColor
+        ? {
+            borderColor: subjColor,
+            boxShadow: `0 4px 0 ${subjColor}`,
+          }
+        : {}),
     });
     document.body.appendChild(ghost);
 
@@ -313,13 +691,26 @@ export default function LandingClient({ isSignedIn, userEmail }) {
       [
         { transform: "translate(0, 0) scale(1)", opacity: 1, offset: 0 },
         { transform: "translate(0, -4px) scale(1.02)", opacity: 1, offset: 0.2 },
-        { transform: `translate(${dx}px, ${dy}px) scale(${scale})`, opacity: 0.25, offset: 1 },
+        {
+          transform: `translate(${dx}px, ${dy}px) scale(${scale})`,
+          opacity: 0.25,
+          offset: 1,
+        },
       ],
-      { duration: 380, easing: "cubic-bezier(0.16, 1, 0.3, 1)", fill: "forwards" }
+      { duration: FLIGHT_CARD_MS, easing: FLUID_EASE, fill: "forwards" }
     );
+    flipRegistryRef.current?.track(animation);
 
-    animation.onfinish = () => {
+    let removed = false;
+    const removeGhost = () => {
+      if (removed) return;
+      removed = true;
       ghost.remove();
+    };
+
+    animation.oncancel = removeGhost;
+    animation.onfinish = () => {
+      removeGhost();
       badge.classList.remove("is-pop");
       void badge.offsetWidth;
       badge.classList.add("is-pop");
@@ -327,13 +718,15 @@ export default function LandingClient({ isSignedIn, userEmail }) {
   }
 
   function handleAdvanceTask(taskId, event) {
+    settleTriageImmediately();
     const targetTask = heroTasks.find((task) => task.id === taskId);
     if (!targetTask) return;
     const nextStatus = NEXT_TASK_STATUS[targetTask.status] ?? "todo";
     if (nextStatus === "progress" || nextStatus === "done") {
       const cardEl = event.currentTarget.closest(".task-card");
-      flyCardToBadge(cardEl, nextStatus);
+      flyCardToBadge(cardEl, nextStatus, targetTask.subj);
     }
+    captureBoardAndIndicator(null);
     const targetColumn = BOARD_COLUMNS.find((col) => col.id === nextStatus);
     setHeroTasks((prev) =>
       prev.map((task) =>
@@ -345,17 +738,38 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     );
   }
 
+  function handleReplayTriage() {
+    allClearCancelRef.current?.();
+    allClearCancelRef.current = () => {};
+    if (prefersReducedMotion()) {
+      settleTriageImmediately();
+      showToast("Reduced motion active: board stays settled");
+      return;
+    }
+
+    const needsBoardReset = heroView !== "board";
+    const needsFilterReset = heroFilter !== "ALL" && filteredTasks.length < 2;
+    if (needsBoardReset || needsFilterReset) {
+      replayPendingRef.current = true;
+      if (needsBoardReset) setHeroView("board");
+      if (needsFilterReset) setHeroFilter("ALL");
+      return;
+    }
+
+    runTriageSequence();
+  }
+
   function handleResetDemo() {
+    allClearCancelRef.current?.();
+    allClearCancelRef.current = () => {};
+    flipRegistryRef.current?.cancelAll();
+    settleTriageImmediately();
     setHeroTasks(INITIAL_HERO_TASKS.map((task) => ({ ...task })));
     setHeroFilter("ALL");
+    setFocusSubject("ALL");
     setBoardAnnouncement("Demo board reset.");
     showToast("Demo board reset");
   }
-
-  const filteredTasks =
-    heroFilter === "ALL"
-      ? heroTasks
-      : heroTasks.filter((task) => task.subj === heroFilter);
 
   const activeStage =
     WORKFLOW_TABS.find((tab) => tab.id === stageId) ?? WORKFLOW_TABS[0];
@@ -364,6 +778,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
   function renderTaskCard(task) {
     const isProgress = task.status === "progress";
     const isDone = task.status === "done";
+    const isFocused = focusSubject !== "ALL" && focusSubject === task.subj;
     const actionLabel = isProgress
       ? `Mark ${task.title} as Done`
       : isDone
@@ -373,7 +788,8 @@ export default function LandingClient({ isSignedIn, userEmail }) {
     return (
       <div
         key={task.id}
-        className={`task-card${isProgress ? " is-progress-card" : isDone ? " is-done-card" : ""}`}
+        data-flip-id={task.id}
+        className={`task-card${isProgress ? " is-progress-card" : isDone ? " is-done-card" : ""}${isFocused ? " is-focus-card" : ""}`}
       >
         <button
           type="button"
@@ -486,78 +902,127 @@ export default function LandingClient({ isSignedIn, userEmail }) {
               </div>
 
               <div
-                className="board-frame stamp-2"
+                ref={boardFrameRef}
+                className="board-frame stamp-board"
+                data-triage-phase={triagePhase}
                 aria-label="Interactive TaskTracker board preview"
               >
-                <div className="board-chrome">
+                <div
+                  className="board-chrome"
+                  onPointerDownCapture={() => settleTriageImmediately()}
+                  onKeyDownCapture={() => settleTriageImmediately()}
+                >
                   <div className="chrome-left">
                     <span className="chrome-sq is-blue" aria-hidden="true" />
                     <span className="chrome-sq" aria-hidden="true" />
                     <span className="chrome-title">Class Board Demo</span>
+                    {triagePhase !== "settled" && (
+                      <span className="triage-pill">
+                        {triagePhase === "pile"
+                          ? "Unsorted pile"
+                          : "Organizing"}
+                      </span>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    className="btn-secondary btn-compact"
-                    onClick={handleResetDemo}
-                  >
-                    Reset demo
-                  </button>
+                  <div className="chrome-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary btn-compact"
+                      onClick={handleReplayTriage}
+                    >
+                      Replay triage
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-compact"
+                      onClick={handleResetDemo}
+                    >
+                      Reset demo
+                    </button>
+                  </div>
                 </div>
 
-                <div className="board-toolbar">
+                <div
+                  className="board-toolbar"
+                  onPointerDownCapture={() => settleTriageImmediately()}
+                  onKeyDownCapture={() => settleTriageImmediately()}
+                >
                   <div
+                    ref={heroFilterGroupRef}
                     className="segmented-control"
                     role="radiogroup"
                     aria-label="Filter demo tasks by subject"
                     aria-orientation="horizontal"
                     onKeyDown={navigateOptions}
                   >
-                    {HERO_FILTERS.map((subj) => (
-                      <button
-                        key={subj}
-                        type="button"
-                        role="radio"
-                        aria-checked={heroFilter === subj}
-                        tabIndex={heroFilter === subj ? 0 : -1}
-                        className={`seg-item${heroFilter === subj ? " is-active" : ""}`}
-                        onClick={() => setHeroFilter(subj)}
-                      >
-                        {subj === "ALL" ? "All" : subj}
-                      </button>
-                    ))}
+                    {HERO_FILTERS.map((subj) => {
+                      const active = heroFilter === subj;
+                      return (
+                        <button
+                          key={subj}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          tabIndex={active ? 0 : -1}
+                          className={`seg-item${active ? " is-active" : ""}`}
+                          onClick={() => handleFilterChange(subj)}
+                        >
+                          <span>{subj === "ALL" ? "All" : subj}</span>
+                          {active && (
+                            <span
+                              className="seg-active-glide"
+                              aria-hidden="true"
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
 
                   <div
+                    ref={heroViewGroupRef}
                     className="segmented-control"
                     role="tablist"
                     aria-label="Board view mode"
                     aria-orientation="horizontal"
                     onKeyDown={navigateOptions}
                   >
-                    {HERO_VIEW_TABS.map((view) => (
-                      <button
-                        key={view.id}
-                        id={`${uid}-board-view-tab-${view.id}`}
-                        type="button"
-                        role="tab"
-                        aria-selected={heroView === view.id}
-                        aria-controls={boardViewPanelId}
-                        tabIndex={heroView === view.id ? 0 : -1}
-                        className={`seg-item${heroView === view.id ? " is-active" : ""}`}
-                        onClick={() => setHeroView(view.id)}
-                      >
-                        {view.label}
-                      </button>
-                    ))}
+                    {HERO_VIEW_TABS.map((view) => {
+                      const active = heroView === view.id;
+                      return (
+                        <button
+                          key={view.id}
+                          id={`${uid}-board-view-tab-${view.id}`}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          aria-controls={boardViewPanelId}
+                          tabIndex={active ? 0 : -1}
+                          className={`seg-item${active ? " is-active" : ""}`}
+                          onClick={() => handleViewChange(view.id)}
+                        >
+                          <span>{view.label}</span>
+                          {active && (
+                            <span
+                              className="seg-active-glide"
+                              aria-hidden="true"
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
                 <div
+                  ref={boardBodyRef}
                   id={boardViewPanelId}
                   className="board-body"
                   role="tabpanel"
                   aria-labelledby={`${uid}-board-view-tab-${heroView}`}
                   tabIndex={0}
+                  onClickCapture={() => settleTriageImmediately()}
+                  onKeyDownCapture={() => settleTriageImmediately()}
                 >
                   <div
                     className={`mini-cols${heroView === "list" ? " is-list" : ""}`}
@@ -602,10 +1067,16 @@ export default function LandingClient({ isSignedIn, userEmail }) {
 
                 <div className="board-hint">
                   <span>
-                    Select any task box to advance it from To Do to In Progress
-                    to Done.
+                    {isAllDone
+                      ? "Visible tasks complete. Enjoy the quiet board or reset demo."
+                      : triagePhase === "pile"
+                        ? "Four deadlines stacked in inbox pile before sorting into calm columns."
+                        : "Select any task box to advance it from To Do to In Progress to Done."}
                   </span>
                   <span className="board-live" aria-live="polite">
+                    {isAllDone && (
+                      <span className="board-allclear">All clear</span>
+                    )}
                     {boardAnnouncement}
                   </span>
                 </div>
@@ -621,22 +1092,31 @@ export default function LandingClient({ isSignedIn, userEmail }) {
         >
           <div ref={reelWindowRef} className="reel-window">
             <div ref={reelTrackRef} className="reel-track">
-              {SUBJECTS.map((subject) => (
-                <div key={subject.code} className="ticker-chip">
-                  <span
-                    className="subj-tag"
-                    style={{ backgroundColor: subject.bg }}
+              {SUBJECTS.map((subject) => {
+                const pressed = focusSubject === subject.code;
+                return (
+                  <button
+                    key={subject.code}
+                    type="button"
+                    aria-pressed={pressed}
+                    className={`ticker-chip${pressed ? " is-focused-chip" : ""}`}
+                    onClick={() => handleReelSubjectClick(subject.code)}
                   >
-                    {subject.code}
-                  </span>
-                  <span>{subject.name}</span>
-                </div>
-              ))}
+                    <span
+                      className="subj-tag"
+                      style={{ backgroundColor: subject.bg }}
+                    >
+                      {subject.code}
+                    </span>
+                    <span>{subject.name}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
 
-        <section className="section" id="workflow">
+        <section ref={workflowSectionRef} className="section" id="workflow">
           <div className="wrap">
             <div className="section-head reveal">
               <div>
@@ -652,27 +1132,58 @@ export default function LandingClient({ isSignedIn, userEmail }) {
             </div>
 
             <div
+              ref={stageTabsRef}
               className="stage-tabs reveal"
               role="tablist"
               aria-label="Feature workflow"
               aria-orientation="horizontal"
               onKeyDown={navigateOptions}
             >
-              {WORKFLOW_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  id={`${uid}-stage-tab-${tab.id}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={stageId === tab.id}
-                  aria-controls={stagePanelId}
-                  tabIndex={stageId === tab.id ? 0 : -1}
-                  className={`stage-tab${stageId === tab.id ? " is-active" : ""}`}
-                  onClick={() => setStageId(tab.id)}
-                >
-                  <span className="stage-tab-lbl">{tab.label}</span>
-                </button>
-              ))}
+              {WORKFLOW_TABS.map((tab) => {
+                const active = stageId === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    id={`${uid}-stage-tab-${tab.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    aria-controls={stagePanelId}
+                    tabIndex={active ? 0 : -1}
+                    className={`stage-tab${active ? " is-active" : ""}`}
+                    onClick={() => handleStageChange(tab.id)}
+                  >
+                    <span className="stage-tab-lbl">{tab.label}</span>
+                    {active && (
+                      <span className="seg-active-glide" aria-hidden="true" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="workflow-route-wrap" aria-hidden="true">
+              <svg
+                className="workflow-route-svg"
+                viewBox="0 0 1200 18"
+                preserveAspectRatio="none"
+                fill="none"
+              >
+                <path
+                  className="workflow-route-ghost"
+                  d="M 150 4 L 150 9 L 1050 9 L 1050 15"
+                />
+                <path
+                  ref={workflowRoutePathRef}
+                  className="workflow-route-fill"
+                  pathLength="1"
+                  d="M 150 4 L 150 9 L 1050 9 L 1050 15"
+                />
+                <rect className="workflow-route-node" x="147" y="1" width="6" height="6" />
+                <rect className="workflow-route-node" x="447" y="6" width="6" height="6" />
+                <rect className="workflow-route-node" x="747" y="6" width="6" height="6" />
+                <rect className="workflow-route-node is-end" x="1047" y="12" width="6" height="6" />
+              </svg>
             </div>
 
             <div
@@ -757,7 +1268,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                               events.map((event) => (
                                 <span
                                   key={event.title}
-                                  className="cal-dot"
+                                  className={`cal-dot${focusSubject === event.subj ? " is-focus-dot" : ""}`}
                                   style={{
                                     backgroundColor: SUBJECT_BG_MAP[event.subj],
                                   }}
@@ -773,8 +1284,12 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                   </div>
                   <div className="cal-agenda-list" aria-live="polite">
                     {activeCalEvents.length > 0 ? (
-                      activeCalEvents.map((event) => (
-                        <div key={event.title} className="cal-agenda">
+                      activeCalEvents.map((event, idx) => (
+                        <div
+                          key={`${calDay}-${event.title}`}
+                          className={`cal-agenda${focusSubject === event.subj ? " is-focus-agenda" : ""}`}
+                          style={{ "--agenda-step": idx }}
+                        >
                           <div>
                             <strong>{event.title}</strong>
                             <div className="stage-demo-meta">
@@ -792,7 +1307,11 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                         </div>
                       ))
                     ) : (
-                      <div className="cal-agenda">
+                      <div
+                        key={`${calDay}-empty`}
+                        className="cal-agenda"
+                        style={{ "--agenda-step": 0 }}
+                      >
                         <span className="stage-demo-meta">
                           No deadlines scheduled for day {calDay}.
                         </span>
@@ -804,7 +1323,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
 
               {stageId === "qr" && (
                 <div className="qr-stage">
-                  <div className="qr-grid" aria-hidden="true">
+                  <div key={qrSeed} className="qr-grid" aria-hidden="true">
                     {Array.from({ length: 81 }, (_, index) => {
                       const row = Math.floor(index / 9);
                       const col = index % 9;
@@ -818,6 +1337,7 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                         <span
                           key={index}
                           className={`qr-cell${on ? " on" : ""}`}
+                          style={{ "--qr-step": row + col }}
                         />
                       );
                     })}
@@ -887,7 +1407,9 @@ export default function LandingClient({ isSignedIn, userEmail }) {
                         startHold(event.currentTarget, event.pointerId)
                       }
                       onPointerUp={(event) => cancelHold(event.currentTarget)}
-                      onPointerCancel={(event) => cancelHold(event.currentTarget)}
+                      onPointerCancel={(event) =>
+                        cancelHold(event.currentTarget)
+                      }
                       onBlur={(event) => cancelHold(event.currentTarget)}
                       onKeyDown={handleHoldKeyDown}
                       onKeyUp={handleHoldKeyUp}
@@ -951,25 +1473,32 @@ export default function LandingClient({ isSignedIn, userEmail }) {
               </div>
 
               <div
+                ref={billingGroupRef}
                 className="segmented-control"
                 role="radiogroup"
                 aria-label="Billing period"
                 aria-orientation="horizontal"
                 onKeyDown={navigateOptions}
               >
-                {BILLING_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={billing === option.id}
-                    tabIndex={billing === option.id ? 0 : -1}
-                    className={`seg-item${billing === option.id ? " is-active" : ""}`}
-                    onClick={() => setBilling(option.id)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                {BILLING_OPTIONS.map((option) => {
+                  const active = billing === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      tabIndex={active ? 0 : -1}
+                      className={`seg-item${active ? " is-active" : ""}`}
+                      onClick={() => handleBillingChange(option.id)}
+                    >
+                      <span>{option.label}</span>
+                      {active && (
+                        <span className="seg-active-glide" aria-hidden="true" />
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -1017,9 +1546,14 @@ export default function LandingClient({ isSignedIn, userEmail }) {
         <div className="wrap footer-row">
           <div className="footer-brand">
             <span className="footer-wordmark">TaskTracker</span>
-            <span>Study hall landing page and portal for computer-programming</span>
+            <span>
+              Study hall landing page and portal for computer-programming
+            </span>
           </div>
-          <span>Demo landing surface. Auth connects to your PostgreSQL session store.</span>
+          <span>
+            Demo landing surface. Auth connects to your PostgreSQL session
+            store.
+          </span>
         </div>
       </footer>
 

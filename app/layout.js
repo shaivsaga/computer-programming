@@ -10,9 +10,15 @@ export const metadata = {
 const THEME_INIT_SCRIPT = `
 (function(){
   try{
-    document.documentElement.classList.add('js');
+    var d=document.documentElement;
+    d.classList.add('js');
     var t=localStorage.getItem('tt_theme');
-    if(t==='dark'||t==='light'){document.documentElement.dataset.theme=t;}
+    if(t==='dark'||t==='light'){d.dataset.theme=t;}
+    var rm=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(window.location.pathname==='/'&&!rm&&sessionStorage.getItem('tt_triage_seen')!=='1'){
+      d.dataset.triage='pending';
+      setTimeout(function(){if(d.dataset.triage==='pending')delete d.dataset.triage;},1500);
+    }
   }catch(e){}
 })();
 `;

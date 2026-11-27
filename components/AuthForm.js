@@ -8,6 +8,7 @@ import AuthShell from "./AuthShell";
 import Link from "next/link";
 import { navigateOptions } from "@/lib/keyboard";
 import { PRICING_PLANS } from "@/lib/landing-data";
+import { prefersReducedMotion, UNLOCK_REDIRECT_MS } from "@/lib/motion";
 
 const COPY = {
   login: {
@@ -70,15 +71,12 @@ export default function AuthForm({ mode, selectedPlan = "" }) {
       });
       if (res.ok) {
         setUnlocked(true);
-        const reduced = window.matchMedia(
-          "(prefers-reduced-motion: reduce)"
-        ).matches;
-        if (reduced) {
+        if (prefersReducedMotion()) {
           window.location.replace("/dashboard");
         } else {
           setTimeout(() => {
             window.location.replace("/dashboard");
-          }, 220);
+          }, UNLOCK_REDIRECT_MS);
         }
         return;
       }

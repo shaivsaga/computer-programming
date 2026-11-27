@@ -17,6 +17,7 @@ export default async function DashboardPage() {
     <AuthShell
       title="Account"
       sprite="open"
+      lockState="unlocked"
       isSignedIn
       statusLabel="Session active"
     >

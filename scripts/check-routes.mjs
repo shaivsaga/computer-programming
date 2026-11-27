@@ -208,6 +208,188 @@ async function continuumHeaderAndReel(page) {
   assert.equal(await header.getAttribute("data-moved"), "false");
 }
 
+async function triageAndMotionContracts(browser, viewport, page, theme) {
+  // Verify cold first-paint once-per-session Desk Triage completes with CLS === 0.
+  const triageCtx = await browser.newContext({ baseURL: origin.href, viewport });
+  await triageCtx.addInitScript((initTheme) => {
+    try {
+      localStorage.setItem("tt_theme", initTheme);
+    } catch {
+      // ignore
+    }
+    window.__triageCls = 0;
+    window.__boardTriageCls = 0;
+    window.__triagePhases = [];
+    const obs = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (!entry.hadRecentInput) {
+          window.__triageCls += entry.value;
+          const hitsBoard = (entry.sources || []).some((src) =>
+            src.node?.closest?.(".board-frame")
+          );
+          if (hitsBoard) {
+            window.__boardTriageCls += entry.value;
+          }
+        }
+      }
+    });
+    obs.observe({ type: "layout-shift", buffered: true });
+    new MutationObserver(() => {
+      const p = document.querySelector(".board-frame")?.getAttribute("data-triage-phase");
+      if (p && window.__triagePhases[window.__triagePhases.length - 1] !== p) {
+        window.__triagePhases.push(p);
+      }
+    }).observe(document, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["data-triage-phase"],
+    });
+    window.__readTriageStats = () => ({
+      totalCls: Number(window.__triageCls.toFixed(5)),
+      boardCls: Number(window.__boardTriageCls.toFixed(5)),
+      phases: [...window.__triagePhases],
+      seen: sessionStorage.getItem("tt_triage_seen"),
+    });
+  }, theme);
+  const coldPage = await triageCtx.newPage();
+  const coldErrors = [];
+  coldPage.on("pageerror", (e) => coldErrors.push(e.message));
+  coldPage.on("console", (msg) => {
+    if (msg.type() === "error") coldErrors.push(msg.text());
+  });
+  try {
+    await coldPage.goto("/");
+    await coldPage.waitForFunction(
+      () =>
+        document.querySelector(".board-frame")?.getAttribute("data-triage-phase") ===
+          "settled" && sessionStorage.getItem("tt_triage_seen") === "1",
+      null,
+      { timeout: 4000 }
+    );
+    const triageStats = await coldPage.evaluate(() => window.__readTriageStats());
+    assert.deepEqual(coldErrors, [], `Cold triage console errors: ${coldErrors}`);
+    assert(
+      triageStats.phases.includes("pile") &&
+        triageStats.phases.includes("converging") &&
+        triageStats.phases.at(-1) === "settled",
+      `Expected full pile -> converging -> settled FSM transition, got ${JSON.stringify(triageStats.phases)}`
+    );
+    assert.equal(
+      triageStats.boardCls,
+      0,
+      `Expected zero board CLS during Desk Triage, got ${triageStats.boardCls}`
+    );
+    assert(
+      triageStats.totalCls < 0.02,
+      `Expected total cold-load CLS < 0.02, got ${triageStats.totalCls}`
+    );
+    assert.equal(triageStats.seen, "1");
+
+    // Same-session reload skips the opening pile and lands directly settled.
+    await coldPage.reload();
+    assert.equal(
+      await coldPage.locator(".board-frame").getAttribute("data-triage-phase"),
+      "settled"
+    );
+  } finally {
+    await triageCtx.close();
+  }
+
+  // Manual Replay triage starts pile, and mid-anticipation filter click resolves without delay.
+  await page.getByRole("button", { name: "Replay triage", exact: true }).click();
+  await page.waitForSelector('.board-frame[data-triage-phase="pile"]', {
+    timeout: 2000,
+  });
+  await page.waitForTimeout(120);
+  await page.getByRole("radio", { name: "CP104", exact: true }).click();
+  assert.equal(
+    await page.locator(".board-frame").getAttribute("data-triage-phase"),
+    "settled"
+  );
+  assert.equal(
+    await page.getByRole("radio", { name: "CP104", exact: true }).getAttribute("aria-checked"),
+    "true"
+  );
+  assert.equal(await page.locator(".task-card").count(), 1);
+
+  // Rapid 5-click FLIP interruption across board controls inside 500ms leaves zero ghosts/invisible cards.
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.waitForTimeout(40);
+  await page.locator(".task-check").first().click();
+  await page.waitForTimeout(55);
+  await page.getByRole("radio", { name: "CP104", exact: true }).click();
+  await page.waitForTimeout(55);
+  await page.getByRole("tab", { name: "List", exact: true }).click();
+  await page.waitForTimeout(55);
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.waitForTimeout(55);
+  await page.getByRole("tab", { name: "Board", exact: true }).click();
+  await page.waitForTimeout(550);
+  const hygiene = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll(".task-card")];
+    return {
+      ghosts: document.querySelectorAll(".motion-ghost").length,
+      canvases: document.querySelectorAll(".allclear-canvas").length,
+      invisible: cards.filter((c) => parseFloat(getComputedStyle(c).opacity) < 0.99).length,
+      badgeSum: [...document.querySelectorAll(".count-badge")].reduce(
+        (sum, b) => sum + Number(b.textContent.trim()),
+        0
+      ),
+    };
+  });
+  assert.deepEqual(hygiene, { ghosts: 0, canvases: 0, invisible: 0, badgeSum: 4 });
+
+  // Quiet all-clear canvas burst triggers cleanly on filtered completion and removes canvas afterward.
+  await page.getByRole("button", { name: "Reset demo", exact: true }).click();
+  await page.getByRole("radio", { name: "CP104", exact: true }).click();
+  await page.getByRole("button", { name: "Mark Build mock SaaS landing + login flow as Done" }).click();
+  await page.locator(".board-allclear").waitFor({ state: "visible" });
+  await page.waitForTimeout(480);
+  assert.equal(await page.locator(".allclear-canvas").count(), 0);
+  await page.getByRole("button", { name: "Reset demo", exact: true }).click();
+
+  // Clicking a reel chip persists tt_focus_subject across workflow calendar and auth routes.
+  const finChip = page.locator(".ticker-chip", { hasText: "FINMATH101" });
+  const chipBox = await finChip.boundingBox();
+  assert(chipBox.height >= 44, `Expected ticker chip height >= 44px, got ${chipBox.height}`);
+  await finChip.click();
+  assert.equal(await finChip.getAttribute("aria-pressed"), "true");
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("tt_focus_subject")),
+    "FINMATH101"
+  );
+  await page.getByRole("tab", { name: "Calm Calendar" }).click();
+  assert(await page.locator(".cal-dot.is-focus-dot").count() >= 1);
+  assert(await page.locator(".cal-agenda.is-focus-agenda").count() >= 1);
+  for (const authPath of ["/login", "/signup"]) {
+    await page.goto(authPath);
+    assert.equal(await page.locator(".art-focus").innerText(), "Focus: FINMATH101");
+  }
+  await page.goto("/");
+  await page.getByRole("button", { name: "Reset demo", exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("tt_focus_subject")),
+    "ALL"
+  );
+
+  // Reduced motion bypasses Desk Triage pile and keeps Replay triage settled.
+  await page.evaluate(() => sessionStorage.removeItem("tt_triage_seen"));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  assert.equal(
+    await page.locator(".board-frame").getAttribute("data-triage-phase"),
+    "settled"
+  );
+  await page.getByRole("button", { name: "Replay triage", exact: true }).click();
+  assert.equal(
+    await page.locator(".board-frame").getAttribute("data-triage-phase"),
+    "settled"
+  );
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  console.log("desk triage, FLIP interruption, canvas burst, and focus continuity verified", theme);
+}
+
 async function kanbanBoardAndTaxonomy(page) {
   const getColStats = async () =>
     page.locator(".mini-col").evaluateAll((cols) =>
@@ -463,8 +645,10 @@ try {
       if (theme === "dark") {
         await page.getByRole("button", { name: "Switch to dark theme" }).click();
         await page.getByRole("button", { name: "Switch to light theme" }).waitFor();
+        await page.waitForTimeout(320);
       }
       await auditPage(page, "/", theme);
+      await triageAndMotionContracts(browser, viewport, page, theme);
       await kanbanBoardAndTaxonomy(page);
       await checkGroupKeyboard(page, 4);
       await continuumHeaderAndReel(page);

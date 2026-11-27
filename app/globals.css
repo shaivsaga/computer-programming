@@ -346,10 +346,49 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
   padding: 0 24px;
 }
 
+/* View Transition stepped theme wipe anchored at the theme button */
+@keyframes themeWipeIn {
+  from {
+    clip-path: inset(var(--vt-t, 0px) var(--vt-r, 0px) var(--vt-b, 0px) var(--vt-l, 0px));
+  }
+  to {
+    clip-path: inset(0px 0px 0px 0px);
+  }
+}
+
+::view-transition-old(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-new(root) {
+  animation: themeWipeIn 280ms steps(6, end) both;
+  mix-blend-mode: normal;
+}
+
 /* Entrance & Scroll Reveals (safe first paint without JS) */
 @keyframes stampIn {
-  from { opacity: 0; transform: translateY(14px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes boardFrameIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes popBadge {
@@ -377,6 +416,28 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
   80% { transform: translateX(3px); }
 }
 
+@keyframes agendaStepIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes qrCellStepIn {
+  from {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .check-draw-svg {
   flex: none;
 }
@@ -389,18 +450,24 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 
 html.js .reveal {
   opacity: 0;
-  transform: translateY(16px);
-  transition: opacity 380ms var(--ease), transform 380ms var(--ease);
+  clip-path: inset(0 0 18% 0);
+  transform: translateY(12px);
+  transition:
+    opacity 260ms steps(5, end),
+    clip-path 260ms steps(5, end),
+    transform 260ms steps(5, end);
 }
 
 html.js .reveal.is-visible {
   opacity: 1;
+  clip-path: inset(0 0 0 0);
   transform: translateY(0);
 }
 
-.stamp-1 { animation: stampIn 340ms var(--ease) 20ms both; }
-.stamp-2 { animation: stampIn 380ms var(--ease) 80ms both; }
-.stamp-3 { animation: stampIn 420ms var(--ease) 140ms both; }
+.stamp-1 { animation: stampIn 260ms steps(5, end) 10ms both; }
+.stamp-2 { animation: stampIn 260ms steps(5, end) 50ms both; }
+.stamp-3 { animation: stampIn 260ms steps(5, end) 90ms both; }
+.stamp-board { animation: boardFrameIn 220ms steps(4, end) 30ms both; }
 
 /* =========================================================================
    HERO SECTION
@@ -480,9 +547,10 @@ html.js .reveal.is-visible {
 
 .board-chrome {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px 12px;
   padding: 8px 14px;
   background-color: var(--sf2);
   border-bottom: 2px solid var(--ln);
@@ -490,9 +558,32 @@ html.js .reveal.is-visible {
 
 .chrome-left {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: 28px;
+}
+
+.chrome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.triage-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 2px solid var(--ac);
+  background-color: var(--acs);
+  color: var(--tx);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .chrome-sq {
@@ -535,6 +626,7 @@ html.js .reveal.is-visible {
 }
 
 .seg-item {
+  position: relative;
   flex: 0 0 auto;
   min-width: 44px;
   min-height: 44px;
@@ -559,7 +651,16 @@ html.js .reveal.is-visible {
 .seg-item.is-active {
   background-color: var(--acs);
   color: var(--tx);
-  box-shadow: inset 0 -3px 0 var(--ac);
+}
+
+.seg-active-glide {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background-color: var(--ac);
+  pointer-events: none;
 }
 
 .board-body:focus-visible {
@@ -567,6 +668,7 @@ html.js .reveal.is-visible {
 }
 
 .board-body {
+  position: relative;
   padding: 14px;
   background-color: var(--bg);
 }
@@ -587,6 +689,20 @@ html.js .reveal.is-visible {
   border: 2px solid var(--ln);
   padding: 12px;
   min-height: 248px;
+  transition: border-color 180ms steps(4, end), background-color 180ms steps(4, end);
+}
+
+html.js[data-triage="pending"] .mini-col,
+.board-frame[data-triage-phase="pile"] .mini-col {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+html.js[data-triage="pending"] .mini-col-hd,
+.board-frame[data-triage-phase="pile"] .mini-col-hd,
+html.js[data-triage="pending"] .empty-stack,
+.board-frame[data-triage-phase="pile"] .empty-stack {
+  opacity: 0;
 }
 
 .mini-col-hd {
@@ -644,7 +760,7 @@ html.js .reveal.is-visible {
 }
 
 .count-badge.is-pop {
-  animation: popBadge 240ms var(--ease);
+  animation: popBadge 220ms steps(4, end);
 }
 
 .task-stack {
@@ -679,6 +795,10 @@ html.js .reveal.is-visible {
 
 .task-card.is-progress-card {
   border-color: var(--ac);
+}
+
+.task-card.is-focus-card {
+  box-shadow: inset 3px 0 0 var(--focus-subj-bg, var(--ac)), 0 2px 0 var(--sh);
 }
 
 .task-card.is-done-card {
@@ -784,8 +904,20 @@ html.js .reveal.is-visible {
 }
 
 .board-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: var(--tx);
   font-weight: 600;
+}
+
+.board-allclear {
+  padding: 2px 8px;
+  border: 2px solid var(--ok);
+  background-color: var(--okb);
+  color: var(--ok);
+  font-size: 0.8125rem;
+  font-weight: 700;
 }
 
 /* Flying Ghost Card */
@@ -808,7 +940,7 @@ html.js .reveal.is-visible {
   overflow: hidden;
   contain: layout paint;
   content-visibility: auto;
-  contain-intrinsic-size: auto 62px;
+  contain-intrinsic-size: auto 70px;
 }
 
 .reel-window {
@@ -820,7 +952,7 @@ html.js .reveal.is-visible {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 24px;
+  padding: 6px 24px;
   width: max-content;
   transform: translate3d(var(--reel-x, 0px), 0, 0);
   will-change: transform;
@@ -830,12 +962,25 @@ html.js .reveal.is-visible {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  min-height: 44px;
+  padding: 6px 12px;
   border: 2px solid var(--ln);
   background-color: var(--bg);
   font-size: var(--text-sm);
   font-weight: 600;
   white-space: nowrap;
+  transition: border-color 140ms steps(4, end), background-color 140ms steps(4, end);
+}
+
+.ticker-chip:hover {
+  border-color: var(--ac);
+  background-color: var(--sf2);
+}
+
+.ticker-chip.is-focused-chip {
+  border-color: var(--ac);
+  background-color: var(--acs);
+  box-shadow: 0 2px 0 var(--ac);
 }
 
 /* =========================================================================
@@ -878,10 +1023,11 @@ html.js .reveal.is-visible {
   gap: 2px;
   border: 2px solid var(--ln);
   background-color: var(--ln);
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
 
 .stage-tab {
+  position: relative;
   min-height: 52px;
   padding: 12px 16px;
   text-align: left;
@@ -895,7 +1041,45 @@ html.js .reveal.is-visible {
 .stage-tab.is-active {
   background-color: var(--acs);
   color: var(--tx);
-  box-shadow: inset 0 -4px 0 var(--ac);
+}
+
+.stage-tab .seg-active-glide {
+  height: 4px;
+}
+
+.workflow-route-wrap {
+  width: 100%;
+  height: 18px;
+  margin-bottom: 6px;
+}
+
+.workflow-route-svg {
+  display: block;
+  width: 100%;
+  height: 18px;
+}
+
+.workflow-route-ghost {
+  stroke: var(--ln);
+  stroke-width: 2;
+  stroke-dasharray: 4 6;
+}
+
+.workflow-route-fill {
+  stroke: var(--ac);
+  stroke-width: 2;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+}
+
+.workflow-route-node {
+  fill: var(--sf);
+  stroke: var(--ac);
+  stroke-width: 2;
+}
+
+.workflow-route-node.is-end {
+  fill: var(--ac);
 }
 
 .stage-tab-lbl {
@@ -1196,6 +1380,11 @@ html.js .reveal.is-visible {
   border: 1px solid rgba(20, 24, 58, 0.35);
 }
 
+.cal-dot.is-focus-dot {
+  outline: 2px solid var(--tx);
+  outline-offset: 1px;
+}
+
 .cal-dot.is-quiet {
   width: 4px;
   height: 4px;
@@ -1219,6 +1408,12 @@ html.js .reveal.is-visible {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  animation: agendaStepIn 180ms steps(4, end) calc(var(--agenda-step, 0) * 35ms) both;
+}
+
+.cal-agenda.is-focus-agenda {
+  border-color: var(--ac);
+  box-shadow: inset 3px 0 0 var(--focus-subj-bg, var(--ac));
 }
 
 /* Interactive QR Matrix */
@@ -1251,7 +1446,10 @@ html.js .reveal.is-visible {
   transition: background-color 140ms var(--ease);
 }
 
-.qr-cell.on { background-color: #1A1D3D; }
+.qr-cell.on {
+  background-color: #1A1D3D;
+  animation: qrCellStepIn 160ms steps(4, end) calc(var(--qr-step, 0) * 8ms) both;
+}
 
 .qr-copy {
   flex: 1;
@@ -1423,7 +1621,11 @@ html.js .reveal.is-visible {
   border: 2px solid var(--ln);
   box-shadow: 0 6px 0 var(--sh);
   padding: 24px;
-  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+  transition: border-color 180ms steps(4, end), box-shadow 180ms steps(4, end);
+}
+
+.art-card[data-focus-active="true"] {
+  box-shadow: inset 0 3px 0 var(--focus-subj-bg, var(--ac)), 0 6px 0 var(--sh);
 }
 
 .art-card[data-lock-state="typing"],
@@ -1448,6 +1650,29 @@ html.js .reveal.is-visible {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 14px;
+}
+
+.art-meta-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.art-focus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.art-focus-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--tx);
 }
 
 .art-status {
@@ -1487,6 +1712,11 @@ html.js .reveal.is-visible {
   width: min(100%, 22rem);
   height: auto;
   image-rendering: pixelated;
+  transition: transform 180ms steps(4, end);
+}
+
+.art-card[data-lock-state="peeking"] .lock-sprite {
+  transform: translateY(-2px);
 }
 
 .art-caption {
@@ -1726,6 +1956,11 @@ html.js .reveal.is-visible {
 
   .stage-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 16px;
+  }
+
+  .workflow-route-wrap {
+    display: none;
   }
 
   .nav-links {
@@ -1846,6 +2081,22 @@ html.js .reveal.is-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  ::view-transition-new(root),
+  ::view-transition-old(root) {
+    animation: none !important;
+  }
+  .stamp-1,
+  .stamp-2,
+  .stamp-3,
+  .stamp-board,
+  html.js .reveal {
+    opacity: 1 !important;
+    clip-path: none !important;
+    transform: none !important;
+  }
+  .workflow-route-fill {
+    stroke-dashoffset: 0 !important;
   }
   .check-draw-path {
     stroke-dashoffset: 0;

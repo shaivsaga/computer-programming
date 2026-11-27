@@ -66,9 +66,9 @@ export default function TopBar({
     return () => observer.disconnect();
   }, []);
 
-  function handleThemeClick() {
-    const next = theme === "light" ? "dark" : "light";
-    toggleTheme();
+  function handleThemeClick(event) {
+    const originRect = event?.currentTarget?.getBoundingClientRect?.();
+    const next = toggleTheme(originRect);
     if (onThemeSwitch) {
       onThemeSwitch(next);
     }

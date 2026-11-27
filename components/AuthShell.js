@@ -1,5 +1,9 @@
+"use client";
+
 import Image from "next/image";
 import TopBar from "./TopBar";
+import { useStudyTheme } from "@/app/providers";
+import { SUBJECT_BG_MAP } from "@/lib/landing-data";
 
 export default function AuthShell({
   title,
@@ -10,13 +14,20 @@ export default function AuthShell({
   planName,
   children,
 }) {
+  const { focusSubject } = useStudyTheme();
+  const hasFocus = focusSubject !== "ALL" && SUBJECT_BG_MAP[focusSubject];
+
   return (
     <div className="auth-page pixel-grid-bg">
       <TopBar isSignedIn={isSignedIn} />
       <main className="auth-shell">
         <div className="auth-layout">
           <div className="art-stage">
-            <div className="art-card" data-lock-state={lockState}>
+            <div
+              className="art-card"
+              data-lock-state={lockState}
+              data-focus-active={hasFocus ? "true" : undefined}
+            >
               <div className="art-card-head">
                 <span className="art-status" aria-live="polite">
                   {lockState === "unlocked" && (
@@ -40,7 +51,22 @@ export default function AuthShell({
                   )}
                   <span>{statusLabel}</span>
                 </span>
-                {planName && <span className="art-plan">Plan: {planName}</span>}
+                <div className="art-meta-group">
+                  {hasFocus && (
+                    <span
+                      className="art-focus"
+                      data-focus-subject={focusSubject}
+                    >
+                      <span
+                        className="art-focus-swatch"
+                        style={{ backgroundColor: SUBJECT_BG_MAP[focusSubject] }}
+                        aria-hidden="true"
+                      />
+                      Focus: {focusSubject}
+                    </span>
+                  )}
+                  {planName && <span className="art-plan">Plan: {planName}</span>}
+                </div>
               </div>
               <div className="art-canvas">
                 <Image
